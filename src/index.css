@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@keyframes laserScan {
+  0% {
+    top: 2%;
+    opacity: 0.9;
+  }
+  50% {
+    top: 96%;
+    opacity: 1;
+  }
+  100% {
+    top: 2%;
+    opacity: 0.9;
+  }
+}
+
+.animate-laser-scan {
+  animation: laserScan 2s ease-in-out infinite;
+}
+
+@keyframes radarSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-radar-spin {
+  animation: radarSpin 6s linear infinite;
+}

@@ -1,0 +1,519 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Point } from '../types';
+import {
+  computeHomography,
+  generateProjectedCircleSVG,
+  getSectorBoundaryAngles,
+} from '../utils/boardProjection';
+import { autoDetectBoardOpenCV, analyzeBoardWithGemini } from '../utils/boardDetector';
+import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw } from 'lucide-react';
+
+interface CalibrationOverlayProps {
+  containerWidth: number;
+  containerHeight: number;
+  onPointsChange: (points: Point[]) => void;
+  onSaveCalibration?: () => void;
+  cv?: any;
+  videoElement?: HTMLVideoElement | null;
+  zoomLevel?: number;
+  onZoomChange?: (zoom: number) => void;
+}
+
+export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
+  containerWidth,
+  containerHeight,
+  onPointsChange,
+  onSaveCalibration,
+  cv,
+  videoElement,
+  zoomLevel = 1,
+  onZoomChange,
+}) => {
+  const [points, setPoints] = useState<Point[]>([]);
+  const [activeIdx, setActiveIdx] = useState<number>(0);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const [isDetecting, setIsDetecting] = useState<boolean>(false);
+  const [detectStatus, setDetectStatus] = useState<string | null>(null);
+  const [showDpad, setShowDpad] = useState<boolean>(false);
+
+  // Initialize points only once when dimensions are available
+  useEffect(() => {
+    if (points.length === 0 && containerWidth > 0 && containerHeight > 0) {
+      const cx = containerWidth / 2;
+      const cy = containerHeight / 2;
+      // Realistic dartboard double-ring radius in typical camera frame (~22% of container)
+      const r = Math.min(containerWidth, containerHeight) * 0.22;
+      const initialPoints = [
+        { x: cx, y: cy - r }, // Top (12 o'clock)
+        { x: cx + r, y: cy }, // Right (3 o'clock)
+        { x: cx, y: cy + r }, // Bottom (6 o'clock)
+        { x: cx - r, y: cy }, // Left (9 o'clock)
+      ];
+      setPoints(initialPoints);
+      onPointsChange(initialPoints);
+    }
+  }, [containerWidth, containerHeight]);
+
+  const handlePointerDown = (idx: number, e: React.PointerEvent) => {
+    e.preventDefault();
+    setActiveIdx(idx);
+    setDraggingIdx(idx);
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (draggingIdx === null) return;
+
+    const svg = e.currentTarget as SVGSVGElement;
+    const rect = svg.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const newPoints = [...points];
+    newPoints[draggingIdx] = { x, y };
+    setPoints(newPoints);
+    onPointsChange(newPoints);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (draggingIdx !== null) {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    }
+    setDraggingIdx(null);
+  };
+
+  // Micro-adjustment nudge
+  const nudge = (dx: number, dy: number) => {
+    if (points.length !== 4) return;
+    const newPoints = [...points];
+    newPoints[activeIdx] = {
+      x: newPoints[activeIdx].x + dx,
+      y: newPoints[activeIdx].y + dy,
+    };
+    setPoints(newPoints);
+    onPointsChange(newPoints);
+  };
+
+  // Auto-Detect Board handler
+  const handleAutoDetect = async () => {
+    if (!videoElement) {
+      setDetectStatus('Kameran är inte redo ännu.');
+      return;
+    }
+
+    setIsDetecting(true);
+    setDetectStatus('Söker efter darttavlan...');
+
+    // 1. Try Gemini AI Vision FIRST (Semantic dartboard recognition & 5 keypoints)
+    setDetectStatus('AI-Syn analyserar kamerasynfältet...');
+    let detected = await analyzeBoardWithGemini(videoElement, containerWidth, containerHeight, zoomLevel);
+
+    // 2. Fallback to local OpenCV geometric circle detection if AI vision is unavailable/offline
+    if (!detected && cv) {
+      setDetectStatus('Fallback: Lokalt datorseende söker efter tavla...');
+      detected = autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight, zoomLevel);
+    }
+
+    if (detected) {
+      setPoints(detected);
+      onPointsChange(detected);
+      setDetectStatus('Darttavla hittad!');
+      calculateAndSetAutoZoom(detected);
+    } else {
+      setDetectStatus('Ingen darttavla hittades i kamerasynfältet. Rikta kameran mot tavlan.');
+    }
+
+    setIsDetecting(false);
+    setTimeout(() => setDetectStatus(null), 4000);
+  };
+
+  // Calculate & apply optimal Auto-Zoom so dartboard fills ~72% of screen
+  const calculateAndSetAutoZoom = (pts: Point[] = points) => {
+    if (pts.length !== 4 || !onZoomChange || containerWidth <= 0 || containerHeight <= 0) return;
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const boardDiameter = Math.max(maxX - minX, maxY - minY);
+    if (boardDiameter <= 0) return;
+
+    const minContainer = Math.min(containerWidth, containerHeight);
+    const baseDiameter = boardDiameter / zoomLevel;
+    const idealZoom = Math.min(Math.max((minContainer * 0.72) / baseDiameter, 1.0), 3.5);
+    onZoomChange(Math.round(idealZoom * 10) / 10);
+  };
+
+  // Reset 4 points to standard circle centered on screen
+  const resetToDefaultCircle = () => {
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    const cx = containerWidth / 2;
+    const cy = containerHeight / 2;
+    const r = Math.min(containerWidth, containerHeight) * 0.36;
+    const defaultPts: Point[] = [
+      { x: cx, y: cy - r }, // Top (20)
+      { x: cx + r, y: cy }, // Right (6)
+      { x: cx, y: cy + r }, // Bottom (3)
+      { x: cx - r, y: cy }, // Left (11)
+    ];
+    setPoints(defaultPts);
+    onPointsChange(defaultPts);
+    setDetectStatus('Återställde kalibreringspunkterna till mitten.');
+    setTimeout(() => setDetectStatus(null), 3000);
+  };
+
+  // Track previous zoom level to scale points when zoom changes
+  const prevZoomRef = useRef(zoomLevel);
+
+  useEffect(() => {
+    const oldZoom = prevZoomRef.current;
+    if (oldZoom !== zoomLevel && points.length === 4 && containerWidth > 0 && containerHeight > 0) {
+      const cx = containerWidth / 2;
+      const cy = containerHeight / 2;
+      const factor = zoomLevel / oldZoom;
+
+      const scaledPoints = points.map((p) => ({
+        x: (p.x - cx) * factor + cx,
+        y: (p.y - cy) * factor + cy,
+      }));
+
+      setPoints(scaledPoints);
+      onPointsChange(scaledPoints);
+    }
+    prevZoomRef.current = zoomLevel;
+  }, [zoomLevel, containerWidth, containerHeight]);
+
+  const labels = ['Topp (20)', 'Höger (6)', 'Botten (3)', 'Vänster (11)'];
+
+  // Calculate 3D projective wireframe using Homography
+  const project = computeHomography(points);
+
+  return (
+    <div className="absolute inset-0 w-full h-full pointer-events-none z-10 flex flex-col justify-between overflow-hidden">
+      {/* High-Tech Animated Scanning HUD Overlay when Auto-Detecting */}
+      {isDetecting && (
+        <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden bg-slate-950/40 backdrop-blur-[1px] flex items-center justify-center">
+          {/* Sweeping Laser Scanline */}
+          <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_20px_#f59e0b] animate-laser-scan z-10" />
+
+          {/* Central Radar Target Reticle */}
+          <div className="relative w-64 h-64 sm:w-80 sm:h-80 flex items-center justify-center">
+            <div className="absolute inset-0 border-2 border-dashed border-amber-400/60 rounded-full animate-radar-spin" />
+            <div className="absolute inset-3 border border-blue-500/40 rounded-full animate-pulse" />
+            <div className="absolute inset-12 border border-blue-400/30 rounded-full" />
+            
+            <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-amber-400" />
+            <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-amber-400" />
+            <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-amber-400" />
+            <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-amber-400" />
+
+            <div className="absolute w-full h-[1px] bg-amber-400/40" />
+            <div className="absolute h-full w-[1px] bg-amber-400/40" />
+
+            <div className="w-8 h-8 rounded-full border-2 border-amber-400 bg-amber-400/20 flex items-center justify-center animate-ping" />
+          </div>
+
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-slate-950/90 border border-amber-500/50 px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3 z-20">
+            <div className="w-3 h-3 rounded-full bg-amber-400 animate-ping" />
+            <div className="flex flex-col">
+              <span className="text-amber-400 font-bold text-xs tracking-wider uppercase">
+                {detectStatus || 'Skannar Darttavla...'}
+              </span>
+              <span className="text-slate-400 text-[10px]">Identifierar dubbelring, tårtbitar & bullseye...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SVG Layer for Points and Wireframe Overlay */}
+      <svg
+        className="absolute inset-0 w-full h-full touch-none pointer-events-auto"
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+      >
+        {/* Render Projected Dartboard Wireframe Grid if homography computed */}
+        {project && (
+          <g className="pointer-events-none opacity-85">
+            {/* Outer Double Ring (170mm) & Inner Double Ring (162mm) */}
+            <path
+              d={generateProjectedCircleSVG(170, project)}
+              fill="rgba(59, 130, 246, 0.08)"
+              stroke="#3b82f6"
+              strokeWidth="2"
+            />
+            <path
+              d={generateProjectedCircleSVG(162, project)}
+              fill="none"
+              stroke="#60a5fa"
+              strokeWidth="1.5"
+              strokeDasharray="2 2"
+            />
+
+            {/* Outer Triple Ring (107mm) & Inner Triple Ring (97mm) */}
+            <path
+              d={generateProjectedCircleSVG(107, project)}
+              fill="rgba(239, 68, 68, 0.08)"
+              stroke="#ef4444"
+              strokeWidth="1.5"
+            />
+            <path
+              d={generateProjectedCircleSVG(97, project)}
+              fill="none"
+              stroke="#f87171"
+              strokeWidth="1.5"
+              strokeDasharray="2 2"
+            />
+
+            {/* Outer Bull (15.9mm) & Inner Bull (6.35mm) */}
+            <path
+              d={generateProjectedCircleSVG(15.9, project)}
+              fill="rgba(34, 197, 94, 0.2)"
+              stroke="#22c55e"
+              strokeWidth="1.5"
+            />
+            <path
+              d={generateProjectedCircleSVG(6.35, project)}
+              fill="rgba(239, 68, 68, 0.6)"
+              stroke="#ffffff"
+              strokeWidth="1.5"
+            />
+
+            {/* Sector Boundary Radial Lines */}
+            {getSectorBoundaryAngles().map((angleDeg, i) => {
+              const rad = (angleDeg * Math.PI) / 180;
+              const innerPt = project(15.9 * Math.cos(rad), 15.9 * Math.sin(rad));
+              const outerPt = project(170 * Math.cos(rad), 170 * Math.sin(rad));
+              return (
+                <line
+                  key={i}
+                  x1={innerPt.x}
+                  y1={innerPt.y}
+                  x2={outerPt.x}
+                  y2={outerPt.y}
+                  stroke="#94a3b8"
+                  strokeWidth="1"
+                  strokeDasharray="3 3"
+                />
+              );
+            })}
+          </g>
+        )}
+
+        {/* Outer quad boundary line */}
+        <polygon
+          points={points.map((p) => `${p.x},${p.y}`).join(' ')}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth="2.5"
+          className="pointer-events-none"
+        />
+
+        {/* Draw interactive calibration nodes */}
+        {points.map((p, idx) => (
+          <g
+            key={idx}
+            transform={`translate(${p.x}, ${p.y})`}
+            onPointerDown={(e) => handlePointerDown(idx, e)}
+            className="cursor-move touch-none"
+          >
+            {/* Larger transparent touch area */}
+            <circle r="32" fill="transparent" />
+
+            {/* Active highlight pulse ring */}
+            {activeIdx === idx && (
+              <circle r="22" fill="none" stroke="#3b82f6" strokeWidth="2.5" className="animate-ping opacity-75" />
+            )}
+
+            {/* Node body */}
+            <circle
+              r="14"
+              fill={activeIdx === idx ? '#3b82f6' : '#ef4444'}
+              stroke="#ffffff"
+              strokeWidth="3"
+              className="transition-colors duration-150 shadow-lg"
+            />
+            <text
+              y="-22"
+              textAnchor="middle"
+              fill="white"
+              className="text-xs font-bold pointer-events-none select-none"
+              style={{ textShadow: '0px 2px 5px rgba(0,0,0,0.9)' }}
+            >
+              {labels[idx]}
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      {/* TOP FLOATING BAR: Auto-Detect & Zoom Controls */}
+      <div className="absolute top-3 left-3 right-3 pointer-events-auto flex items-center justify-between gap-2 z-20">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAutoDetect}
+            disabled={isDetecting}
+            className="bg-amber-500 hover:bg-amber-400 active:scale-95 disabled:opacity-50 text-slate-950 px-3 py-2 rounded-2xl font-bold text-xs flex items-center gap-1.5 shadow-xl shadow-amber-500/20 backdrop-blur-md border border-amber-400/50 transition-all"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span className="hidden sm:inline">Auto-Kalibrera Tavla</span>
+            <span className="sm:hidden">Auto-Kalibrera</span>
+          </button>
+
+          <button
+            onClick={resetToDefaultCircle}
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-300 active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border border-slate-700/80 shadow-lg backdrop-blur-md transition-all"
+            title="Återställ punkterna till en centrerad cirkel på skärmen"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Återställ</span>
+          </button>
+
+          {detectStatus && (
+            <span className="text-[11px] text-amber-300 font-semibold bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-amber-500/40 shadow-lg">
+              {detectStatus}
+            </span>
+          )}
+        </div>
+
+        {/* Zoom Slider + Auto-Zoom Button */}
+        {onZoomChange && (
+          <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-xl">
+            <ZoomIn className="w-3.5 h-3.5 text-blue-400" />
+            <span className="text-slate-300 font-semibold text-[11px] hidden sm:inline">Zoom:</span>
+            <input
+              type="range"
+              min="1"
+              max="3"
+              step="0.1"
+              value={zoomLevel}
+              onChange={(e) => onZoomChange(Number(e.target.value))}
+              className="w-16 sm:w-20 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+            />
+            <span className="font-mono text-blue-400 font-bold text-xs">{zoomLevel.toFixed(1)}x</span>
+            <button
+              onClick={() => calculateAndSetAutoZoom()}
+              className="ml-1 bg-blue-600/80 hover:bg-blue-500 active:scale-95 text-white px-2 py-1 rounded-lg text-[10px] font-bold border border-blue-400/40 transition-all"
+              title="Beräkna och ställ in perfekt zoom för tavlan"
+            >
+              Auto-Zoom
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* POPUP D-PAD OVERLAY (Collapsible Fine-Tuning Pad) */}
+      {showDpad && (
+        <div className="absolute bottom-16 right-3 pointer-events-auto z-30 bg-slate-950/95 border border-slate-800 p-3 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-300 pb-1 border-b border-slate-800">
+            <span className="flex items-center gap-1">
+              <Focus className="w-3.5 h-3.5 text-blue-400" />
+              <span>Finjustera {labels[activeIdx].split(' ')[0]}</span>
+            </span>
+            <button
+              onClick={() => setShowDpad(false)}
+              className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <div className="flex items-center gap-1 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+              <button
+                onClick={() => nudge(-1, 0)}
+                className="p-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg transition-colors"
+                title="Vänster 1px"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => nudge(0, -1)}
+                  className="p-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg transition-colors"
+                  title="Upp 1px"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => nudge(0, 1)}
+                  className="p-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg transition-colors"
+                  title="Ner 1px"
+                >
+                  <ArrowDown className="w-4 h-4" />
+                </button>
+              </div>
+              <button
+                onClick={() => nudge(1, 0)}
+                className="p-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg transition-colors"
+                title="Höger 1px"
+              >
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1.5 text-[10px] text-slate-400">
+              <button
+                onClick={() => nudge(0, -5)}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 rounded-lg font-bold"
+              >
+                +5px Upp
+              </button>
+              <button
+                onClick={() => nudge(0, 5)}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 rounded-lg font-bold"
+              >
+                +5px Ner
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BOTTOM FLOATING CONTROL BAR */}
+      <div className="absolute bottom-3 left-3 right-3 pointer-events-auto z-20 bg-slate-950/90 backdrop-blur-md border border-slate-800/80 p-2 sm:p-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-2">
+        {/* Left Side: Point Selector Tabs & Fine-Tune D-Pad Toggle */}
+        <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto py-0.5">
+          {labels.map((lbl, idx) => (
+            <button
+              key={idx}
+              onClick={() => setActiveIdx(idx)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                activeIdx === idx
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                  : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+              }`}
+            >
+              {lbl.split(' ')[0]}
+            </button>
+          ))}
+
+          {/* Finjustera (D-Pad) Toggle Button */}
+          <button
+            onClick={() => setShowDpad(!showDpad)}
+            className={`p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all ${
+              showDpad
+                ? 'bg-amber-500 text-slate-950 shadow-md'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+            }`}
+            title="Öppna finjusteringsknappar"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Pilknappar</span>
+          </button>
+        </div>
+
+        {/* Right Side: Primary Save Button */}
+        <button
+          onClick={onSaveCalibration}
+          className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/30 flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0"
+        >
+          <CheckCircle2 className="w-4 h-4 text-white" />
+          <span>Starta Spel</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
