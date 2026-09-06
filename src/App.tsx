@@ -1,12 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Loader2, Camera, Eye, Target } from 'lucide-react';
+import { Loader2, Camera, Eye } from 'lucide-react';
 import { CameraFeed } from './components/CameraFeed';
 import { useOpenCV } from './hooks/useOpenCV';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { Point } from './types';
 import { useDartDetector } from './hooks/useDartDetector';
 import { useDartGame } from './hooks/useDartGame';
-import { getScoreFromCoordinates } from './utils/dartMath';
+import { BOARD_PX, getScoreFromPixel } from './utils/dartMath';
+import { audioEngine } from './utils/audioEngine';
+import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
 
 export default function App() {
@@ -20,6 +22,9 @@ export default function App() {
   const [noiseLevel, setNoiseLevel] = useState<number>(0);
   const [motionThreshold, setMotionThreshold] = useState<number>(3000);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+  const [zoomCapability, setZoomCapability] = useState<ZoomCapability>({
+    supported: false, min: 1, max: 1, step: 0.1,
+  });
   const [lastScoredDartLabel, setLastScoredDartLabel] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'live' | 'vision'>('live');
 
@@ -35,16 +40,12 @@ export default function App() {
   } = useDartGame(501);
   
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
-  const transformMatrixRef = useRef<any>(null); // To store cv.Mat
+  // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
+  // render och fungerade bara för att setIsCalibrated råkade trigga en
+  // omrendering direkt efteråt.
+  const [transformMatrix, setTransformMatrix] = useState<any>(null);
 
-  // Cleanup transform matrix on unmount
-  useEffect(() => {
-    return () => {
-      if (transformMatrixRef.current) {
-        transformMatrixRef.current.delete();
-      }
-    };
-  }, []);
+  useEffect(() => () => transformMatrix?.delete(), [transformMatrix]);
 
   const handleVideoReady = useCallback((video: HTMLVideoElement) => {
     console.log('Video är redo:', video.videoWidth, 'x', video.videoHeight);
@@ -60,17 +61,14 @@ export default function App() {
   }, []);
 
   const handleDartDetected = useCallback((pt: Point) => {
-    const scoreObj = getScoreFromCoordinates(pt.x, pt.y);
-    console.log('Dart detected at:', pt, 'Score:', scoreObj);
-    
-    // Register dart in 501 game motor
+    const scoreObj = getScoreFromPixel(pt.x, pt.y);
     registerDart(scoreObj);
-    
-    // Show toast / label indicator for 2 seconds
+
+    audioEngine.playDartHitSound();
+    audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
+
     setLastScoredDartLabel(scoreObj.label);
-    setTimeout(() => {
-      setLastScoredDartLabel(null);
-    }, 2500);
+    window.setTimeout(() => setLastScoredDartLabel(null), 2500);
   }, [registerDart]);
 
   const handleDebugState = useCallback((state: string, noise: number) => {
@@ -79,88 +77,62 @@ export default function App() {
   }, []);
 
   // Use our detection hook
-  useDartDetector(cv, videoElement, transformMatrixRef.current, isCalibrated, motionThreshold, debugCanvasRef, handleDartDetected, handleDebugState);
+  useDartDetector(cv, videoElement, transformMatrix, isCalibrated, motionThreshold, debugCanvasRef, handleDartDetected, handleDebugState);
 
   const handleCalibrationClick = () => {
     if (isCalibrated) {
-      if (transformMatrixRef.current) {
-        transformMatrixRef.current.delete();
-        transformMatrixRef.current = null;
-      }
+      setTransformMatrix(null); // effekten nedan raderar den gamla matrisen
       setIsCalibrated(false);
       resetGame();
       return;
     }
-    
+
     if (!cv || !videoElement) {
-      console.warn("Kamera eller OpenCV inte redo för kalibrering ännu.");
+      console.warn('Kamera eller OpenCV inte redo för kalibrering ännu.');
+      return;
+    }
+    if (calibrationPoints.length !== 4) {
+      console.warn('4 kalibreringspunkter krävs, fick:', calibrationPoints.length);
       return;
     }
 
-    if (calibrationPoints.length !== 4) {
-      console.warn("4 kalibreringspunkter krävs, fick:", calibrationPoints.length);
-      return;
-    }
-    
+    let srcMat: any = null;
+    let dstMat: any = null;
     try {
-      // 1. Transform screen display points to raw video frame coordinates
-      const vw = videoElement.videoWidth || 1280;
-      const vh = videoElement.videoHeight || 720;
+      // Videon visas med object-cover: skalad med max() och centrerad.
+      // Ingen zoom-term här - zoomen sker i hårdvaran, så videoframen är
+      // redan zoomad och container-koordinater mappar rakt av.
+      const vw = videoElement.videoWidth;
+      const vh = videoElement.videoHeight;
       const cw = containerSize.width || window.innerWidth;
       const ch = containerSize.height || window.innerHeight;
-      const cx = cw / 2;
-      const cy = ch / 2;
-      
-      const scale = Math.max(cw / vw, ch / vh);
-      const videoDisplayWidth = vw * scale;
-      const videoDisplayHeight = vh * scale;
-      const offsetX = (videoDisplayWidth - cw) / 2;
-      const offsetY = (videoDisplayHeight - ch) / 2;
-      
-      const videoPoints = calibrationPoints.map(p => {
-        // Unzoom screen coordinates relative to container center
-        const unzoomedX = (p.x - cx) / zoomLevel + cx;
-        const unzoomedY = (p.y - cy) / zoomLevel + cy;
-        return {
-          x: (unzoomedX + offsetX) / scale,
-          y: (unzoomedY + offsetY) / scale
-        };
-      });
-      
-      // 2. Create source and destination Mats
-      const srcCoords = [
-        videoPoints[0].x, videoPoints[0].y, // Top
-        videoPoints[1].x, videoPoints[1].y, // Right
-        videoPoints[2].x, videoPoints[2].y, // Bottom
-        videoPoints[3].x, videoPoints[3].y  // Left
-      ];
-      const srcMat = cv.matFromArray(4, 1, cv.CV_32FC2, srcCoords);
-      
-      const targetSize = 800; // Size of the debug canvas
-      const dstCoords = [
-        targetSize/2, 0,             // Top
-        targetSize,   targetSize/2,  // Right
-        targetSize/2, targetSize,    // Bottom
-        0,            targetSize/2   // Left
-      ];
-      const dstMat = cv.matFromArray(4, 1, cv.CV_32FC2, dstCoords);
-      
-      // 3. Get transformation matrix
-      const matrix = cv.getPerspectiveTransform(srcMat, dstMat);
-      
-      // Save the matrix in ref for the hook to use
-      if (transformMatrixRef.current) {
-        transformMatrixRef.current.delete();
-      }
-      transformMatrixRef.current = matrix;
 
-      // Cleanup
-      srcMat.delete();
-      dstMat.delete();
-      
+      const scale = Math.max(cw / vw, ch / vh);
+      const offsetX = (cw - vw * scale) / 2;
+      const offsetY = (ch - vh * scale) / 2;
+
+      const videoPoints = calibrationPoints.map((p) => ({
+        x: (p.x - offsetX) / scale,
+        y: (p.y - offsetY) / scale,
+      }));
+
+      srcMat = cv.matFromArray(4, 1, cv.CV_32FC2, videoPoints.flatMap((p) => [p.x, p.y]));
+      // Målet: en 800x800-bild där radien 400 px motsvarar dubbelringens
+      // ytterkant (170 mm). Se BOARD_PX/MM_PER_PX i dartMath.ts.
+      dstMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        BOARD_PX / 2, 0,
+        BOARD_PX, BOARD_PX / 2,
+        BOARD_PX / 2, BOARD_PX,
+        0, BOARD_PX / 2,
+      ]);
+
+      setTransformMatrix(cv.getPerspectiveTransform(srcMat, dstMat));
       setIsCalibrated(true);
     } catch (err) {
-      console.error("Kalibrering misslyckades:", err);
+      console.error('Kalibrering misslyckades:', err);
+    } finally {
+      srcMat?.delete();
+      dstMat?.delete();
     }
   };
 
@@ -211,9 +183,10 @@ export default function App() {
       <main className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
         {/* Camera Feed (Always active in background for continuous OpenCV frame processing) */}
         <div className={`w-full h-full ${viewMode === 'vision' ? 'opacity-0 pointer-events-none absolute inset-0' : 'relative'}`}>
-          <CameraFeed 
-            onVideoReady={handleVideoReady} 
+          <CameraFeed
+            onVideoReady={handleVideoReady}
             onContainerResize={handleContainerResize}
+            onZoomCapability={setZoomCapability}
             zoomLevel={zoomLevel}
           >
             {isLoaded && !isCalibrated && (
@@ -226,6 +199,7 @@ export default function App() {
                 videoElement={videoElement}
                 zoomLevel={zoomLevel}
                 onZoomChange={setZoomLevel}
+                zoomCapability={zoomCapability}
               />
             )}
           </CameraFeed>

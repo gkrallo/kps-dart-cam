@@ -1,123 +1,148 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+
+export interface ZoomCapability {
+  supported: boolean;
+  min: number;
+  max: number;
+  step: number;
+}
 
 interface CameraFeedProps {
   onVideoReady?: (videoElement: HTMLVideoElement) => void;
   onContainerResize?: (width: number, height: number) => void;
+  onZoomCapability?: (cap: ZoomCapability) => void;
   zoomLevel?: number;
   children?: React.ReactNode;
 }
 
-export const CameraFeed: React.FC<CameraFeedProps> = ({ onVideoReady, onContainerResize, zoomLevel = 1, children }) => {
+/**
+ * Kameravy med hårdvaruzoom.
+ *
+ * OBS: här finns med flit INGEN CSS-transform för zoom. Tidigare gjordes både
+ * hårdvaruzoom OCH `transform: scale()`, medan koordinatmatematiken bara
+ * kompenserade för den ena - vilket gav dubbel zoom och en felaktig homografi
+ * på varje telefon som stödjer zoom-constraint. Hårdvaruzoom ger dessutom
+ * riktiga pixlar; CSS-zoom beskär bara bilden.
+ */
+export const CameraFeed: React.FC<CameraFeedProps> = ({
+  onVideoReady,
+  onContainerResize,
+  onZoomCapability,
+  zoomLevel = 1,
+  children,
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const syncSize = useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    onContainerResize?.(rect.width, rect.height);
+  }, [onContainerResize]);
+
   useEffect(() => {
     let stream: MediaStream | null = null;
+    let cancelled = false;
 
     const initCamera = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError(
+          'Den här webbläsaren ger ingen kameraåtkomst. Kameran kräver HTTPS - ' +
+            'öppna appen via https:// eller localhost.',
+        );
+        return;
+      }
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: 'environment', // Prioritera den bakre kameran
+            facingMode: 'environment',
             width: { ideal: 1920 },
             height: { ideal: 1080 },
           },
           audio: false,
         });
 
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          videoTrackRef.current = track;
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
         }
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = () => {
-             videoRef.current?.play();
-             if (videoRef.current && onVideoReady) {
-               onVideoReady(videoRef.current);
-             }
-             syncCanvasSize();
+        const track = stream.getVideoTracks()[0] ?? null;
+        videoTrackRef.current = track;
+
+        const caps: any = track?.getCapabilities?.() ?? {};
+        onZoomCapability?.(
+          caps.zoom
+            ? {
+                supported: true,
+                min: caps.zoom.min ?? 1,
+                max: Math.min(caps.zoom.max ?? 3, 5),
+                step: caps.zoom.step || 0.1,
+              }
+            : { supported: false, min: 1, max: 1, step: 0.1 },
+        );
+
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            video.play().catch(() => undefined);
+            onVideoReady?.(video);
+            syncSize();
           };
         }
       } catch (err) {
-        console.error('Kamera åtkomst nekades:', err);
-        setError('Kunde inte få åtkomst till kameran. Kontrollera webbläsarens behörigheter. Om du är i en iFrame, försök öppna appen i en ny flik.');
+        console.error('Kameraåtkomst nekades:', err);
+        setError(
+          'Kunde inte få åtkomst till kameran. Kontrollera behörigheterna i webbläsaren. ' +
+            'Kameran kräver dessutom HTTPS.',
+        );
       }
     };
 
     initCamera();
-
-    window.addEventListener('resize', syncCanvasSize);
+    window.addEventListener('resize', syncSize);
 
     return () => {
-      window.removeEventListener('resize', syncCanvasSize);
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      cancelled = true;
+      window.removeEventListener('resize', syncSize);
+      stream?.getTracks().forEach((track) => track.stop());
+      videoTrackRef.current = null;
     };
-  }, [onVideoReady]);
+  }, [onVideoReady, onZoomCapability, syncSize]);
 
-  // Handle camera optical / digital zoom
+  // Hårdvaruzoom
   useEffect(() => {
-    if (videoTrackRef.current) {
-      const track = videoTrackRef.current;
-      const capabilities = track.getCapabilities ? (track.getCapabilities() as any) : {};
-      
-      if (capabilities.zoom) {
-        const min = capabilities.zoom.min || 1;
-        const max = capabilities.zoom.max || 5;
-        const targetZoom = Math.min(Math.max(zoomLevel, min), max);
-        
-        track.applyConstraints({
-          advanced: [{ zoom: targetZoom } as any]
-        }).catch((err) => {
-          console.log('Hardware zoom not supported or failed, fallback to digital zoom:', err);
-        });
-      }
-    }
-  }, [zoomLevel]);
+    const track = videoTrackRef.current;
+    if (!track) return;
+    const caps: any = track.getCapabilities?.() ?? {};
+    if (!caps.zoom) return;
 
-  const syncCanvasSize = () => {
-    if (containerRef.current && canvasRef.current) {
-      // Use actual layout container rect (unaffected by video CSS transform scale)
-      const rect = containerRef.current.getBoundingClientRect();
-      canvasRef.current.width = rect.width;
-      canvasRef.current.height = rect.height;
-      
-      if (onContainerResize) {
-        onContainerResize(rect.width, rect.height);
-      }
-    }
-  };
+    const target = Math.min(Math.max(zoomLevel, caps.zoom.min ?? 1), caps.zoom.max ?? 1);
+    track
+      .applyConstraints({ advanced: [{ zoom: target } as any] })
+      .catch((err) => console.warn('Hårdvaruzoom misslyckades:', err));
+  }, [zoomLevel]);
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full w-full bg-slate-900 text-red-500 p-4 text-center">
+      <div className="flex items-center justify-center h-full w-full bg-slate-900 text-red-400 p-6 text-center text-sm">
         {error}
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="relative w-full h-full overflow-hidden bg-black flex items-center justify-center">
-      {/* Videoström med digital/hårdvaru-zoom support */}
+    <div ref={containerRef} className="relative w-full h-full overflow-hidden bg-black">
       <video
         ref={videoRef}
-        className="absolute top-0 left-0 w-full h-full object-cover transition-transform duration-200"
-        style={{ transform: `scale(${zoomLevel})` }}
+        className="absolute inset-0 w-full h-full object-cover"
         autoPlay
         playsInline
         muted
-      />
-      {/* Canvas överlägg (transparent, används för ritning) */}
-      <canvas
-        ref={canvasRef}
-        className="absolute top-0 left-0 w-full h-full object-cover pointer-events-none transition-transform duration-200"
-        style={{ transform: `scale(${zoomLevel})` }}
       />
       {children}
     </div>

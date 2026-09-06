@@ -162,36 +162,7 @@ export function computeInverseHomography(pts: Point[]): ((x: number, y: number) 
 }
 
 /**
- * Calculates parallax-corrected canonical dartboard position from tip and flight points.
- * @param tip - 2D point of dart tip in image
- * @param flight - 2D point of dart flight/wing in image
- * @param inverseHomography - function mapping image pixels to canonical mm coordinates
- * @param alpha - parallax correction coefficient (default 0.15 for standard dart shaft offset)
- */
-export function getParallaxCorrectedCanonicalPoint(
-  tip: Point,
-  flight: Point | null,
-  inverseHomography: (x: number, y: number) => { X: number; Y: number },
-  alpha: number = 0.15
-): { X: number; Y: number } {
-  const tipCanonical = inverseHomography(tip.x, tip.y);
-  if (!flight) return tipCanonical;
-
-  const flightCanonical = inverseHomography(flight.x, flight.y);
-
-  // Vector from flight to tip in canonical board plane
-  const dX = tipCanonical.X - flightCanonical.X;
-  const dY = tipCanonical.Y - flightCanonical.Y;
-
-  // Parallax correction offsets the tip point along shaft line based on 3D tilt
-  return {
-    X: tipCanonical.X + alpha * dX,
-    Y: tipCanonical.Y + alpha * dY,
-  };
-}
-
-/**
- * Generates SVG path data for a projected circle at canonical radius R
+ * Genererar SVG-path för en projicerad cirkel med kanonisk radie R (mm).
  */
 export function generateProjectedCircleSVG(R: number, project: (X: number, Y: number) => Point, steps = 40): string {
   const points: Point[] = [];

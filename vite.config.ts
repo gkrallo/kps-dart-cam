@@ -1,22 +1,21 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
-    },
-    server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
-    },
-  };
+// base måste matcha repo-namnet för att GitHub Pages ska hitta assets.
+// Vid lokal utveckling ska den vara '/'.
+const base = process.env.GITHUB_ACTIONS ? '/kps-dart-cam/' : '/';
+
+export default defineConfig({
+  base,
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { '@': path.resolve(__dirname, './src') },
+  },
+  server: {
+    // --host gör att du kan öppna appen från telefonen på samma nät.
+    // OBS: kameran kräver HTTPS (eller localhost) för att fungera.
+    host: true,
+  },
 });

@@ -5,7 +5,8 @@ import {
   generateProjectedCircleSVG,
   getSectorBoundaryAngles,
 } from '../utils/boardProjection';
-import { autoDetectBoardOpenCV, analyzeBoardWithGemini } from '../utils/boardDetector';
+import { autoDetectBoardOpenCV } from '../utils/boardDetector';
+import type { ZoomCapability } from './CameraFeed';
 import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw } from 'lucide-react';
 
 interface CalibrationOverlayProps {
@@ -17,6 +18,7 @@ interface CalibrationOverlayProps {
   videoElement?: HTMLVideoElement | null;
   zoomLevel?: number;
   onZoomChange?: (zoom: number) => void;
+  zoomCapability?: ZoomCapability;
 }
 
 export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
@@ -28,6 +30,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   videoElement,
   zoomLevel = 1,
   onZoomChange,
+  zoomCapability,
 }) => {
   const [points, setPoints] = useState<Point[]>([]);
   const [activeIdx, setActiveIdx] = useState<number>(0);
@@ -94,55 +97,33 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     onPointsChange(newPoints);
   };
 
-  // Auto-Detect Board handler
-  const handleAutoDetect = async () => {
-    if (!videoElement) {
-      setDetectStatus('Kameran är inte redo ännu.');
+  // Auto-Detect Board handler (100% lokalt, ingen backend och inget API)
+  const handleAutoDetect = () => {
+    if (!videoElement || !cv) {
+      setDetectStatus('Kameran eller datorseendet är inte redo ännu.');
+      window.setTimeout(() => setDetectStatus(null), 4000);
       return;
     }
 
     setIsDetecting(true);
     setDetectStatus('Söker efter darttavlan...');
 
-    // 1. Try Gemini AI Vision FIRST (Semantic dartboard recognition & 5 keypoints)
-    setDetectStatus('AI-Syn analyserar kamerasynfältet...');
-    let detected = await analyzeBoardWithGemini(videoElement, containerWidth, containerHeight, zoomLevel);
+    // requestAnimationFrame så att skann-overlayen hinner ritas ut innan
+    // OpenCV blockerar huvudtråden.
+    requestAnimationFrame(() => {
+      const detected = autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight);
 
-    // 2. Fallback to local OpenCV geometric circle detection if AI vision is unavailable/offline
-    if (!detected && cv) {
-      setDetectStatus('Fallback: Lokalt datorseende söker efter tavla...');
-      detected = autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight, zoomLevel);
-    }
+      if (detected) {
+        setPoints(detected);
+        onPointsChange(detected);
+        setDetectStatus('Darttavla hittad. Kontrollera att 20:an är i toppen!');
+      } else {
+        setDetectStatus('Ingen tavla hittades. Rikta kameran mot tavlan, eller dra punkterna manuellt.');
+      }
 
-    if (detected) {
-      setPoints(detected);
-      onPointsChange(detected);
-      setDetectStatus('Darttavla hittad!');
-      calculateAndSetAutoZoom(detected);
-    } else {
-      setDetectStatus('Ingen darttavla hittades i kamerasynfältet. Rikta kameran mot tavlan.');
-    }
-
-    setIsDetecting(false);
-    setTimeout(() => setDetectStatus(null), 4000);
-  };
-
-  // Calculate & apply optimal Auto-Zoom so dartboard fills ~72% of screen
-  const calculateAndSetAutoZoom = (pts: Point[] = points) => {
-    if (pts.length !== 4 || !onZoomChange || containerWidth <= 0 || containerHeight <= 0) return;
-    const xs = pts.map((p) => p.x);
-    const ys = pts.map((p) => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const boardDiameter = Math.max(maxX - minX, maxY - minY);
-    if (boardDiameter <= 0) return;
-
-    const minContainer = Math.min(containerWidth, containerHeight);
-    const baseDiameter = boardDiameter / zoomLevel;
-    const idealZoom = Math.min(Math.max((minContainer * 0.72) / baseDiameter, 1.0), 3.5);
-    onZoomChange(Math.round(idealZoom * 10) / 10);
+      setIsDetecting(false);
+      window.setTimeout(() => setDetectStatus(null), 5000);
+    });
   };
 
   // Reset 4 points to standard circle centered on screen
@@ -168,7 +149,13 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
   useEffect(() => {
     const oldZoom = prevZoomRef.current;
-    if (oldZoom !== zoomLevel && points.length === 4 && containerWidth > 0 && containerHeight > 0) {
+    if (
+      zoomCapability?.supported &&
+      oldZoom !== zoomLevel &&
+      points.length === 4 &&
+      containerWidth > 0 &&
+      containerHeight > 0
+    ) {
       const cx = containerWidth / 2;
       const cy = containerHeight / 2;
       const factor = zoomLevel / oldZoom;
@@ -377,28 +364,22 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           )}
         </div>
 
-        {/* Zoom Slider + Auto-Zoom Button */}
-        {onZoomChange && (
+        {/* Zoomreglage - visas bara om kameran faktiskt stödjer hårdvaruzoom.
+            Digital CSS-zoom är borttagen: den beskar bara bilden utan att
+            tillföra en enda pixel, och gav dubbel zoom ihop med hårdvaran. */}
+        {onZoomChange && zoomCapability?.supported && (
           <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-xl">
             <ZoomIn className="w-3.5 h-3.5 text-blue-400" />
-            <span className="text-slate-300 font-semibold text-[11px] hidden sm:inline">Zoom:</span>
             <input
               type="range"
-              min="1"
-              max="3"
-              step="0.1"
+              min={zoomCapability.min}
+              max={zoomCapability.max}
+              step={zoomCapability.step}
               value={zoomLevel}
               onChange={(e) => onZoomChange(Number(e.target.value))}
-              className="w-16 sm:w-20 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              className="w-16 sm:w-24 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
             <span className="font-mono text-blue-400 font-bold text-xs">{zoomLevel.toFixed(1)}x</span>
-            <button
-              onClick={() => calculateAndSetAutoZoom()}
-              className="ml-1 bg-blue-600/80 hover:bg-blue-500 active:scale-95 text-white px-2 py-1 rounded-lg text-[10px] font-bold border border-blue-400/40 transition-all"
-              title="Beräkna och ställ in perfekt zoom för tavlan"
-            >
-              Auto-Zoom
-            </button>
           </div>
         )}
       </div>

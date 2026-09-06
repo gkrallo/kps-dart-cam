@@ -1,126 +1,88 @@
 import { DartScore } from '../types';
 
+/**
+ * Sektorernas ordning medurs, med start på 20 rakt upp.
+ */
 const SECTORS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
 
 /**
- * Calculates dart score from (x, y) coordinates on a 800x800 target canvas with center at (400, 400).
+ * Officiella måtten på en darttavla, i millimeter från centrum.
+ * Källa: WDF/BDO-standard. Ändra aldrig dessa utan att uppdatera testerna.
  */
-export function getScoreFromCoordinates(x: number, y: number): DartScore {
-  const centerX = 400;
-  const centerY = 400;
+export const BOARD_MM = {
+  innerBull: 6.35,   // dubbel bull, 50p
+  outerBull: 15.9,   // enkel bull, 25p
+  tripleInner: 99,
+  tripleOuter: 107,
+  doubleInner: 162,
+  doubleOuter: 170,  // tavlans yttre spelbara kant
+} as const;
 
-  const dx = x - centerX;
-  const dy = y - centerY;
+/**
+ * Kalibreringen mappar de fyra punkterna (som sitter på dubbelringens ytterkant,
+ * alltså 170 mm) till kanterna av en kvadrat med sidan BOARD_PX.
+ * Radien BOARD_PX/2 motsvarar därför exakt BOARD_MM.doubleOuter.
+ */
+export const BOARD_PX = 800;
+export const MM_PER_PX = BOARD_MM.doubleOuter / (BOARD_PX / 2); // 0.425
+export const PX_PER_MM = 1 / MM_PER_PX;                          // 2.3529
 
-  const radius = Math.sqrt(dx * dx + dy * dy);
-
-  // 1. Check Bullseye / Outer Bull
-  if (radius <= 16) {
-    return {
-      baseScore: 25,
-      multiplier: 2,
-      totalPoints: 50,
-      label: 'DB',
-      coordinates: { x, y }
-    };
-  }
-
-  if (radius <= 38) {
-    return {
-      baseScore: 25,
-      multiplier: 1,
-      totalPoints: 25,
-      label: '25',
-      coordinates: { x, y }
-    };
-  }
-
-  // Outside board boundary
-  if (radius > 385) {
-    return {
-      baseScore: 0,
-      multiplier: 0,
-      totalPoints: 0,
-      label: 'MISS',
-      coordinates: { x, y }
-    };
-  }
-
-  // 2. Calculate Sector Angle
-  let deg = Math.atan2(dy, dx) * (180 / Math.PI);
-  if (deg < 0) deg += 360;
-
-  // Sector 20 is centered at 12 o'clock (270 degrees)
-  const normalized = (deg - 270 + 9 + 360) % 360;
-  const sectorIndex = Math.floor(normalized / 18);
-  const baseScore = SECTORS[sectorIndex] ?? 20;
-
-  // 3. Determine Multiplier based on Radius Ring
-  let multiplier = 1;
-  let labelPrefix = 'S';
-
-  if (radius >= 216 && radius <= 242) {
-    multiplier = 3;
-    labelPrefix = 'T';
-  } else if (radius >= 360 && radius <= 385) {
-    multiplier = 2;
-    labelPrefix = 'D';
-  }
-
+/** Konverterar en punkt i den warpade 800x800-bilden till mm med bullseye i origo. */
+export function pixelToCanonical(x: number, y: number): { X: number; Y: number } {
   return {
-    baseScore,
-    multiplier,
-    totalPoints: baseScore * multiplier,
-    label: `${labelPrefix}${baseScore}`,
-    coordinates: { x, y }
+    X: (x - BOARD_PX / 2) * MM_PER_PX,
+    Y: (y - BOARD_PX / 2) * MM_PER_PX,
+  };
+}
+
+/** Konverterar mm-koordinater tillbaka till den warpade 800x800-bilden. */
+export function canonicalToPixel(X: number, Y: number): { x: number; y: number } {
+  return {
+    x: X * PX_PER_MM + BOARD_PX / 2,
+    y: Y * PX_PER_MM + BOARD_PX / 2,
   };
 }
 
 /**
-  * Calculates dart score directly from canonical millimeter coordinates (X, Y)
-  * where Bullseye center is (0,0) and outer double ring radius is 170mm.
-  */
+ * Räknar ut poängen från kanoniska millimeterkoordinater, där bullseye är (0,0)
+ * och dubbelringens ytterkant ligger på radie 170 mm. Y växer nedåt, precis som
+ * i bildkoordinater, så sektor 20 ligger vid negativ Y.
+ *
+ * Detta är den enda poängfunktionen i appen. Räkna aldrig i pixlar.
+ */
 export function getScoreFromCanonicalCoordinates(X: number, Y: number): DartScore {
   const radius = Math.hypot(X, Y);
-
-  // 1. Bullseye / Single Bull
-  if (radius <= 6.35) {
-    return { baseScore: 25, multiplier: 2, totalPoints: 50, label: 'DB', coordinates: { x: X, y: Y } };
-  }
-  if (radius <= 15.9) {
-    return { baseScore: 25, multiplier: 1, totalPoints: 25, label: '25', coordinates: { x: X, y: Y } };
-  }
-
-  // Outside board
-  if (radius > 170) {
-    return { baseScore: 0, multiplier: 0, totalPoints: 0, label: 'MISS', coordinates: { x: X, y: Y } };
-  }
-
-  // 2. Sector Angle (0 deg at 12 o'clock / Sector 20)
-  let deg = Math.atan2(Y, X) * (180 / Math.PI);
-  // Rotate so 12 o'clock (-90 deg) is 0
-  let normDeg = (deg + 90 + 360) % 360;
-  // Each sector is 18 degrees wide, offset by -9 deg
-  const sectorIdx = Math.floor(((normDeg + 9) % 360) / 18);
-  const baseScore = SECTORS[sectorIdx] ?? 20;
-
-  // 3. Multiplier based on mm ring radii
-  let multiplier = 1;
-  let labelPrefix = 'S';
-
-  if (radius >= 97 && radius <= 107) {
-    multiplier = 3;
-    labelPrefix = 'T';
-  } else if (radius >= 162 && radius <= 170) {
-    multiplier = 2;
-    labelPrefix = 'D';
-  }
-
-  return {
+  const at = (baseScore: number, multiplier: number, label: string): DartScore => ({
     baseScore,
     multiplier,
     totalPoints: baseScore * multiplier,
-    label: `${labelPrefix}${baseScore}`,
-    coordinates: { x: X, y: Y }
-  };
+    label,
+    coordinates: { x: X, y: Y },
+  });
+
+  if (radius <= BOARD_MM.innerBull) return at(25, 2, 'DB');
+  if (radius <= BOARD_MM.outerBull) return at(25, 1, '25');
+  if (radius > BOARD_MM.doubleOuter) return at(0, 0, 'MISS');
+
+  // Vinkel: 0 grader rakt upp (sektor 20), växande medurs.
+  const deg = Math.atan2(Y, X) * (180 / Math.PI);
+  const normDeg = (deg + 90 + 360) % 360;
+  const sectorIdx = Math.floor(((normDeg + 9) % 360) / 18);
+  const baseScore = SECTORS[sectorIdx];
+
+  if (radius >= BOARD_MM.tripleInner && radius <= BOARD_MM.tripleOuter) {
+    return at(baseScore, 3, `T${baseScore}`);
+  }
+  if (radius >= BOARD_MM.doubleInner) {
+    return at(baseScore, 2, `D${baseScore}`);
+  }
+  return at(baseScore, 1, `S${baseScore}`);
+}
+
+/**
+ * Bekvämlighetsfunktion: poäng direkt från en punkt i den warpade 800x800-bilden.
+ */
+export function getScoreFromPixel(x: number, y: number): DartScore {
+  const { X, Y } = pixelToCanonical(x, y);
+  return getScoreFromCanonicalCoordinates(X, Y);
 }

@@ -8,262 +8,154 @@ function lineIntersection(p1: Point, p2: Point, p3: Point, p4: Point): Point | n
   const denom = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
   if (Math.abs(denom) < 1e-5) return null;
   const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / denom;
-  return {
-    x: p1.x + t * (p2.x - p1.x),
-    y: p1.y + t * (p2.y - p1.y),
-  };
+  return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
 }
 
 /**
- * Sanitizes and enforces geometric symmetry on dartboard landmark points.
- * If one or more points (like Top, Right, Bottom, Left) are detected off-center,
- * it uses Bullseye center and opposite points to auto-correct the skewed points.
+ * Rimlighetskontroll av fyra detekterade kalibreringspunkter.
+ *
+ * OBS: funktionen FÖRKASTAR trasiga detektioner, den "rättar" dem inte.
+ * Den tidigare versionen speglade punkter genom bullseye för att tvinga fram
+ * symmetri, vilket förstörde perspektivinformationen: en tavla sedd snett SKA
+ * vara osymmetrisk, och speglingen gjorde fyrhörningen till ett parallellogram
+ * så homografin blev affin.
  */
-export function sanitizeDartboardPoints(pts: Point[], bullseye?: Point | null): Point[] {
-  if (pts.length !== 4) return pts;
+export function validateDartboardPoints(pts: Point[], bullseye?: Point | null): boolean {
+  if (pts.length !== 4) return false;
 
-  const B: Point = bullseye || lineIntersection(pts[0], pts[2], pts[1], pts[3]) || {
-    x: (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4,
-    y: (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4,
-  };
+  const B: Point =
+    bullseye ||
+    lineIntersection(pts[0], pts[2], pts[1], pts[3]) || {
+      x: (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4,
+      y: (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4,
+    };
 
   const d = pts.map((p) => dist(p, B));
-  const sortedD = [...d].sort((a, b) => a - b);
-  const dMed = (sortedD[1] + sortedD[2]) / 2;
+  if (d.some((v) => v <= 5)) return false;
 
-  if (dMed <= 5) return pts;
+  const sorted = [...d].sort((a, b) => a - b);
+  const dMed = (sorted[1] + sorted[2]) / 2;
 
-  const result = [...pts];
+  // Perspektiv får förkorta en sida, men inte hur mycket som helst.
+  // 0.5-1.5 svarar mot en ganska brant kameravinkel och är avsiktligt tillåtande.
+  if (d.some((v) => v < 0.5 * dMed || v > 1.5 * dMed)) return false;
 
-  const isPointValid = (i: number): boolean => {
-    const p = pts[i];
-    const distance = d[i];
-    if (distance < 0.60 * dMed || distance > 1.40 * dMed) return false;
-    if (i === 0 && p.y >= B.y) return false; // Top must be above Bullseye
-    if (i === 1 && p.x <= B.x) return false; // Right must be to right of Bullseye
-    if (i === 2 && p.y <= B.y) return false; // Bottom must be below Bullseye
-    if (i === 3 && p.x >= B.x) return false; // Left must be to left of Bullseye
-    return true;
-  };
+  // Punkterna måste ligga åt rätt håll om bullseye.
+  if (pts[0].y >= B.y) return false; // Topp (20) ovanför
+  if (pts[1].x <= B.x) return false; // Höger (6)
+  if (pts[2].y <= B.y) return false; // Botten (3) nedanför
+  if (pts[3].x >= B.x) return false; // Vänster (11)
 
-  for (let i = 0; i < 4; i++) {
-    if (!isPointValid(i)) {
-      const opp = (i + 2) % 4;
-      if (isPointValid(opp)) {
-        // Reflect valid opposite point through Bullseye B
-        result[i] = {
-          x: 2 * B.x - pts[opp].x,
-          y: 2 * B.y - pts[opp].y,
-        };
-      } else {
-        // Fallback to cardinal direction at distance dMed
-        if (i === 0) result[i] = { x: B.x, y: B.y - dMed };
-        else if (i === 1) result[i] = { x: B.x + dMed, y: B.y };
-        else if (i === 2) result[i] = { x: B.x, y: B.y + dMed };
-        else if (i === 3) result[i] = { x: B.x - dMed, y: B.y };
-      }
-    }
-  }
-
-  return result;
+  return true;
 }
 
 /**
- * Attempts to automatically detect the dartboard using OpenCV HoughCircles / Contours.
+ * Grov automatisk detektering av tavlan med HoughCircles.
+ *
+ * Detta är en TILLFÄLLIG lösning som bara ger ett startläge för de fyra
+ * punkterna - den antar att tavlan är en cirkel (den är en ellips så fort
+ * kameran står snett) och den kan inte avgöra tavlans rotation. Ersätts i
+ * nästa steg av ellipsanpassning + polär utveckling + sparat rotationsankare.
  */
 export function autoDetectBoardOpenCV(
   cv: any,
   videoElement: HTMLVideoElement,
   containerWidth: number,
   containerHeight: number,
-  zoomLevel: number = 1.0
 ): Point[] | null {
   if (!cv || !videoElement || videoElement.videoWidth === 0) return null;
 
+  const vw = videoElement.videoWidth;
+  const vh = videoElement.videoHeight;
+
+  let src: any, gray: any, blurred: any, circles: any;
+
   try {
-    const vw = videoElement.videoWidth;
-    const vh = videoElement.videoHeight;
-    const scale = Math.max(containerWidth / vw, containerHeight / vh);
-    const videoDisplayWidth = vw * scale;
-    const videoDisplayHeight = vh * scale;
-    const offsetX = (containerWidth - videoDisplayWidth) / 2;
-    const offsetY = (containerHeight - videoDisplayHeight) / 2;
-
-    const src = new cv.Mat(vh, vw, cv.CV_8UC4);
-    const gray = new cv.Mat();
-    const blurred = new cv.Mat();
-    const circles = new cv.Mat();
-
-    // Capture current frame into canvas
     const canvas = document.createElement('canvas');
     canvas.width = vw;
     canvas.height = vh;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-
     ctx.drawImage(videoElement, 0, 0, vw, vh);
-    const imgData = ctx.getImageData(0, 0, vw, vh);
-    src.data.set(imgData.data);
+
+    src = cv.imread(canvas);
+    gray = new cv.Mat();
+    blurred = new cv.Mat();
+    circles = new cv.Mat();
 
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray, blurred, new cv.Size(9, 9), 2, 2);
 
-    // HoughCircles targeting double ring radius
     const minRadius = Math.round(Math.min(vw, vh) * 0.12);
-    const maxRadius = Math.round(Math.min(vw, vh) * 0.40);
+    const maxRadius = Math.round(Math.min(vw, vh) * 0.45);
     cv.HoughCircles(blurred, circles, cv.HOUGH_GRADIENT, 1, minRadius, 100, 30, minRadius, maxRadius);
 
-    let bestCircle = null;
+    let best: { x: number; y: number; r: number } | null = null;
+    let bestScore = -Infinity;
 
-    if (circles.cols > 0) {
-      let minDistToCenter = Infinity;
-      const imgCenterX = vw / 2;
-      const imgCenterY = vh / 2;
+    for (let i = 0; i < circles.cols; i++) {
+      const x = circles.data32F[i * 3];
+      const y = circles.data32F[i * 3 + 1];
+      const r = circles.data32F[i * 3 + 2];
 
-      for (let i = 0; i < circles.cols; i++) {
-        const x = circles.data32F[i * 3];
-        const y = circles.data32F[i * 3 + 1];
-        let r = circles.data32F[i * 3 + 2];
+      const rx = Math.max(0, Math.round(x - r));
+      const ry = Math.max(0, Math.round(y - r));
+      const rw = Math.min(vw - rx, Math.round(r * 2));
+      const rh = Math.min(vh - ry, Math.round(r * 2));
+      if (rw < 20 || rh < 20) continue;
 
-        // Check if ROI around circle has sufficient texture/contrast (dartboards have high variance)
-        const rx = Math.max(0, Math.round(x - r));
-        const ry = Math.max(0, Math.round(y - r));
-        const rw = Math.min(vw - rx, Math.round(r * 2));
-        const rh = Math.min(vh - ry, Math.round(r * 2));
+      // En darttavla har hög kontrast. Släta ytor (väggar, tyg, hud) har låg.
+      const roi = gray.roi(new cv.Rect(rx, ry, rw, rh));
+      const mean = new cv.Mat();
+      const stddev = new cv.Mat();
+      cv.meanStdDev(roi, mean, stddev);
+      const texture = stddev.data64F[0] ?? 0;
+      roi.delete();
+      mean.delete();
+      stddev.delete();
 
-        if (rw > 10 && rh > 10) {
-          const rect = new cv.Rect(rx, ry, rw, rh);
-          const roi = gray.roi(rect);
-          const mean = new cv.Mat();
-          const stddev = new cv.Mat();
-          cv.meanStdDev(roi, mean, stddev);
-          const stdval = stddev.data64F[0] || stddev.data32F?.[0] || 0;
-          roi.delete();
-          mean.delete();
-          stddev.delete();
+      if (texture < 38) continue;
 
-          // Smooth fabrics, walls, or plain skin have stddev < 30. Real dartboards have stddev > 45.
-          if (stdval < 38) {
-            continue; // Skip smooth false positives like towels or clothes
-          }
-        }
+      // Poängsätt kandidaterna istället för att bara ta den närmast bildmitten.
+      // Den gamla varianten låste ofta på bullseye eller trippelringen, som är
+      // koncentriska med dubbelringen och alltså exakt lika nära mitten.
+      const centerPenalty = Math.hypot(x - vw / 2, y - vh / 2) / Math.min(vw, vh);
+      const sizeBonus = r / maxRadius; // föredra den STÖRSTA rimliga cirkeln
+      const score = texture / 100 + sizeBonus * 2 - centerPenalty;
 
-        // Keep authentic outer double ring radius detected by HoughCircles
-
-        const distCenter = Math.hypot(x - imgCenterX, y - imgCenterY);
-        if (distCenter < minDistToCenter) {
-          minDistToCenter = distCenter;
-          bestCircle = { x, y, r };
-        }
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x, y, r };
       }
     }
 
-    src.delete();
-    gray.delete();
-    blurred.delete();
-    circles.delete();
+    if (!best) return null;
 
-    if (!bestCircle) return null;
-
-    const cx = containerWidth / 2;
-    const cy = containerHeight / 2;
-
-    const videoToContainer = (vx: number, vy: number): Point => {
-      const unzoomedX = vx * scale + offsetX;
-      const unzoomedY = vy * scale + offsetY;
-      return {
-        x: (unzoomedX - cx) * zoomLevel + cx,
-        y: (unzoomedY - cy) * zoomLevel + cy,
-      };
-    };
-
-    const { x, y, r } = bestCircle;
-
-    const rawPoints = [
-      videoToContainer(x, y - r), // Top (20)
-      videoToContainer(x + r, y), // Right (6)
-      videoToContainer(x, y + r), // Bottom (3)
-      videoToContainer(x - r, y), // Left (11)
-    ];
-
-    const bullseyePoint = videoToContainer(x, y);
-
-    return sanitizeDartboardPoints(rawPoints, bullseyePoint);
-  } catch (err) {
-    console.error('Error in autoDetectBoardOpenCV:', err);
-    return null;
-  }
-}
-
-/**
- * Sends a snapshot to the Gemini AI API server endpoint to detect the board.
- */
-export async function analyzeBoardWithGemini(
-  videoElement: HTMLVideoElement,
-  containerWidth: number,
-  containerHeight: number,
-  zoomLevel: number = 1.0
-): Promise<Point[] | null> {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = Math.round((640 * videoElement.videoHeight) / videoElement.videoWidth);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-    const imageBase64 = canvas.toDataURL('image/jpeg', 0.85);
-
-    const res = await fetch('/api/analyze-board', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageBase64 }),
+    // Videon visas med object-cover, alltså skalad med max() och centrerad.
+    const scale = Math.max(containerWidth / vw, containerHeight / vh);
+    const offsetX = (containerWidth - vw * scale) / 2;
+    const offsetY = (containerHeight - vh * scale) / 2;
+    const toContainer = (px: number, py: number): Point => ({
+      x: px * scale + offsetX,
+      y: py * scale + offsetY,
     });
 
-    if (!res.ok) return null;
-
-    const data = await res.json();
-    if (!data.success || data.isDartboardPresent === false || !data.landmarks) {
-      console.log('Gemini reported no dartboard present in frame.');
-      return null;
-    }
-
-    const { top20, right6, bottom3, left11, bullseye } = data.landmarks;
-    if (!top20 || !right6 || !bottom3 || !left11) return null;
-
-    const vw = videoElement.videoWidth;
-    const vh = videoElement.videoHeight;
-    const scale = Math.max(containerWidth / vw, containerHeight / vh);
-    const videoDisplayWidth = vw * scale;
-    const videoDisplayHeight = vh * scale;
-    const offsetX = (containerWidth - videoDisplayWidth) / 2;
-    const offsetY = (containerHeight - videoDisplayHeight) / 2;
-
-    const cx = containerWidth / 2;
-    const cy = containerHeight / 2;
-
-    const normToContainer = (norm: { x: number; y: number }): Point => {
-      const unzoomedX = norm.x * vw * scale + offsetX;
-      const unzoomedY = norm.y * vh * scale + offsetY;
-      return {
-        x: (unzoomedX - cx) * zoomLevel + cx,
-        y: (unzoomedY - cy) * zoomLevel + cy,
-      };
-    };
-
-    const rawPoints = [
-      normToContainer(top20),
-      normToContainer(right6),
-      normToContainer(bottom3),
-      normToContainer(left11),
+    const { x, y, r } = best;
+    const pts = [
+      toContainer(x, y - r), // Topp (20)
+      toContainer(x + r, y), // Höger (6)
+      toContainer(x, y + r), // Botten (3)
+      toContainer(x - r, y), // Vänster (11)
     ];
 
-    const bullseyePoint = bullseye ? normToContainer(bullseye) : null;
-
-    return sanitizeDartboardPoints(rawPoints, bullseyePoint);
+    return validateDartboardPoints(pts, toContainer(x, y)) ? pts : null;
   } catch (err) {
-    console.error('Error analyzing board with Gemini:', err);
+    console.error('autoDetectBoardOpenCV misslyckades:', err);
     return null;
+  } finally {
+    src?.delete();
+    gray?.delete();
+    blurred?.delete();
+    circles?.delete();
   }
 }
-

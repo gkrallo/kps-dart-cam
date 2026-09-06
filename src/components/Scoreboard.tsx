@@ -1,5 +1,5 @@
 import React from 'react';
-import { RotateCcw, RefreshCw, Trophy, AlertTriangle, Settings, CheckCircle2 } from 'lucide-react';
+import { RotateCcw, RefreshCw, Trophy, AlertTriangle, Settings } from 'lucide-react';
 import { DartScore } from '../types';
 
 interface ScoreboardProps {
@@ -12,7 +12,8 @@ interface ScoreboardProps {
   isCalibrated: boolean;
   onCalibrateClick: () => void;
   detectorState: string;
-  noiseLevel: number;
+  /** Reserverad för felsökning; visas inte i UI:t just nu. */
+  noiseLevel?: number;
   motionThreshold: number;
   onThresholdChange: (val: number) => void;
   debugCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -30,7 +31,6 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   isCalibrated,
   onCalibrateClick,
   detectorState,
-  noiseLevel,
   motionThreshold,
   onThresholdChange,
   debugCanvasRef,

@@ -1,27 +1,113 @@
-# Arkitektur & Funktionskarta: KPs DartApp
+# Arkitektur: KPs DartCam
 
-## Översikt
-KPs DartApp är ett automatiskt poängsystem för dart. Applikationen är en React SPA (Single Page Application) byggd med Vite och TypeScript, och designad med Tailwind CSS. All datorseende-logik (Computer Vision) körs 100% lokalt i användarens webbläsare med hjälp av OpenCV.js och mobilens kamera.
+Levande dokumentation. Uppdatera den när arkitekturen ändras.
 
-## Funktioner (Nuvarande iteration)
-1. **Grundlayout**: Mörk, modern UI anpassad för mobilskärmar med en huvudsektion för kameravyn och en nedre panel för poäng och inställningar.
-2. **Kameraintegration**: Använder enhetens bakre kamera (`facingMode: environment`) för att fånga videoströmmen.
-3. **OpenCV.js Inladdning**: Laddar in OpenCV.js asynkront via ett CDN med hjälp av en custom hook (`useOpenCV`). Hanterar laddnings-state och visar en laddningsindikator.
-4. **Interaktiv Kalibrering**: Ett SVG-överlägg låter användaren dra 4 noder (Topp, Höger, Botten, Vänster) för att markera darttavlans ytterkanter i videoströmmen.
-5. **Perspektivtransformering (Homografi)**: OpenCV används för att räkna ut en transformationsmatris (homografi) baserat på de 4 noderna och en perfekt 800x800 kvadrat. Detta "plattar till" darttavlan matematiskt.
-6. **Debug-vy för Kalibrering**: En liten rund canvas i bottenpanelen visar den transformerade darttavlan kontinuerligt.
-7. **Detektion av Pilar (Background Subtraction)**: En kontinuerlig loop använder `cv.absdiff` för att jämföra nuvarande bild med en referensbild (baseline). Rörelse detekteras, och när bilden stabiliserats (ingen rörelse under 500ms) isoleras dartpilens form.
-8. **Extraktion av Pilspets**: Koden använder `cv.findContours` på differensbilden för att hitta dartpilen och räknar sedan ut den punkt på konturen som ligger närmast tavlans centrum. Denna punkt markeras med grönt i debug-vyn.
+## Princip
+
+Ren klientapp. React SPA byggd med Vite, all bildbehandling i webbläsaren via
+OpenCV.js (WASM). **Ingen backend, inga API-nycklar, inga externa anrop.** Vill
+du lägga till "AI" senare ska det vara en modellfil som körs lokalt (ONNX
+Runtime Web / TF.js), inte ett moln-API.
+
+Skälet är inte bara kostnad: precision i datorseende kommer från att få
+upprepa sig. Lokalt kan kalibreringen medelvärdesbilda 30 bildrutor och köra 200
+optimeringsiterationer gratis. Genom ett API har du råd med ett anrop.
 
 ## Filstruktur
-- `/src/App.tsx`: Huvudkomponent, innehåller grundlayouten (Kameravy + Bottenpanel) och hanterar kalibreringslogiken.
-- `/src/hooks/useOpenCV.ts`: Hook för asynkron laddning och initiering av OpenCV.
-- `/src/hooks/useDartDetector.ts`: Hook som kontinuerligt kör homografitransformering, detekterar rörelse, utför bildsubtraktion och räknar ut pilspetsens position när bilden stabiliserats.
-- `/src/components/CameraFeed.tsx`: Komponent som hanterar åtkomst till kamera, uppspelning av video och kan ta emot child-komponenter för överlägg.
-- `/src/components/CalibrationOverlay.tsx`: SVG-baserat interaktivt överlägg för att dra och släppa kalibreringspunkterna.
-- `/src/types.ts`: Innehåller globala typer (som `Point`).
-- `/AGENT.md`: Denna fil, fungerar som levande dokumentation över projektets struktur och funktioner.
 
-## Framtida funktionalitet (Kommande iterationer)
-- Beräkning av faktiska dart-poäng utifrån pilarnas position på den *tillplattade* tavlan.
-- Spel-logik (t.ex. 501, Cricket) och poänghistorik.
+```
+src/
+  App.tsx                      Huvudkomponent, kalibreringsflöde, layout
+  types.ts                     Point, DartScore, TurnRecord
+  components/
+    CameraFeed.tsx             Kameraström + hårdvaruzoom
+    CalibrationOverlay.tsx     SVG-överlägg med de 4 dragbara punkterna
+    Scoreboard.tsx             501-panel, detektorstatus, Vision-miniatyr
+  hooks/
+    useOpenCV.ts               Laddar opencv.js (modulnivå-promise)
+    useDartDetector.ts         rAF-loop: warp, bildsubtraktion, konturanalys
+    useDartGame.ts             501-regelmotor
+  utils/
+    dartMath.ts                ★ Mått, koordinatsystem, poängberäkning
+    boardProjection.ts         Homografi fram och bak, SVG-projektion
+    boardDetector.ts           Automatisk tavledetektering (HoughCircles)
+    audioEngine.ts             Ljudeffekt + svensk TTS
+    __tests__/                 Vitest
+scripts/copy-opencv.mjs        Kopierar opencv.js från npm till public/
+.github/workflows/deploy.yml   Test + bygge + deploy till GitHub Pages
+```
+
+## Koordinatsystem
+
+Se README. Kort: **allt räknas i millimeter med bullseye i origo.** Pixlar
+existerar bara i gränssnittet mot OpenCV, och konverteras direkt via
+`pixelToCanonical` / `canonicalToPixel`. `BOARD_MM` är enda sanningskällan för
+tavlans mått.
+
+## Dataflöde
+
+```
+kamera → warpPerspective(H) → gråskala → absdiff mot baseline
+   → tröskel → morfologi → största konturen → spetspunkt
+   → pixelToCanonical → getScoreFromCanonicalCoordinates → useDartGame
+```
+
+## Kända begränsningar
+
+Ärlig lista över vad som inte är bra ännu.
+
+### Pilspetsen (`useDartDetector.ts`)
+Använder "punkten på konturen närmast tavlans mitt". Det håller bara när pilen
+pekar rakt utåt från centrum. Ligger pilen på tvären, eller sitter den nära
+bullen, plockas en punkt på skaftet eller fjädern.
+
+Två fel ska rättas samtidigt:
+1. **Ingen axel.** Ska bli: `fitLine` på maskpixlarna → projicera → de två
+   extremerna är pilens ändar → avgör vilken som är spetsen genom att mäta
+   bredden vinkelrätt mot axeln (fjädern är 2–3× bredare).
+2. **Fel bild.** Analysen görs i den *warpade* bilden. Homografin gäller bara
+   för punkter i tavlans plan, och pilkroppen sticker ut 10–15 cm — den warpade
+   pilen är en strimma vars riktning inte är pilens riktning. Detektering ska
+   ske i **rå kamerabild**, och bara den färdiga spetspunkten warpas.
+
+### Uttagning av pilar
+`absdiff` är ett absolutbelopp och kan inte skilja "något dök upp" från "något
+försvann". När pilarna dras ur registreras spökkast. Behöver riktad subtraktion
+eller ett explicit "tavla rensad"-läge.
+
+### Automatisk kalibrering (`boardDetector.ts`)
+`HoughCircles` antar att tavlan är en cirkel — den är en ellips så fort kameran
+står snett. Och **rotationen kan inte bestämmas**: tavlans färgmönster är
+periodiskt (roterar du två sektorer ser den likadan ut), så färger och trådar
+ger sektorgränserna men aldrig vilken sektor som är 20.
+
+Planerad lösning: `fitEllipse` på ringens färgmask → polär utveckling (då blir
+ringarna horisontella linjer och sektortrådarna vertikala) → iterativ förfining
+av homografin → **rotationsankare som användaren sätter en gång** och som sparas
+i `localStorage`.
+
+### Sammanslagna pilar
+Största konturen tas alltid. Två pilar som sitter ihop ger en spets. Bör jämföra
+ny mask mot föregående och isolera det tillkomna området.
+
+## Att göra
+
+1. Spetsdetektering med axelanpassning, utförd i rå kamerabild
+2. Tap-to-correct: rätta en feltolkad pil genom att trycka i Vision View
+3. Hantera uttagning av pilar
+4. Lokal kalibrering: ellips → polär utveckling → sparat rotationsankare
+5. Farfar-regelmotor, delad med `kps-dart-scorecard`
+6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas)
+7. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för steg 1 och 4
+
+## Fallgropar
+
+- **OpenCV.js Mat:er städas inte av garbage collectorn.** Varje `new cv.Mat()`,
+  `.clone()` och `.roi()` måste `.delete()`:as. Allokera utanför rAF-loopen.
+- **Callbacks från React i refs**, inte i effektens dependencies — annars byggs
+  detektorn om vid varje kast.
+- **Aldrig både hårdvaruzoom och CSS-transform.** Det gav dubbel zoom och en
+  felaktig homografi. Nu används bara hårdvaruzoom, och reglaget visas bara om
+  kameran stödjer det.
+- **Rimlighetskontroller får förkasta, inte "rätta".** En tavla sedd snett ska
+  vara osymmetrisk; tvingar man fram symmetri förstörs perspektivet.

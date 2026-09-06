@@ -120,7 +120,7 @@ export const useDartGame = (initialStartScore: number = 501) => {
       setCompletedTurns(updatedHistory);
 
       const updatedDarts = [...lastTurn.darts];
-      const removedDart = updatedDarts.pop()!;
+      updatedDarts.pop();
 
       setTurnScoreBefore(lastTurn.scoreBeforeTurn);
       setIsBust(false);

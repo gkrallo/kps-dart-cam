@@ -1,90 +1,110 @@
-# KPs DartApp 🎯
+# KPs DartCam 🎯
 
-Ett automatiskt poängräkningssystem för dart (501) som körs direkt i webbläsaren via mobilens kamera med hjälp av datorseende (OpenCV.js) och Google Gemini AI.
-
----
-
-## 🌟 Funktioner
-
-- **Realtidsdetektering av pilar**: Använder bildsubtraktion och konturanalys i OpenCV för att lokalisera när en pil kastas och träffar tavlan.
-- **Interaktiv 4-punkts kalibrering**: Kalibrera enkelt genom att placera ut de fyra noderna (Topp 20, Höger 6, Botten 3, Vänster 11).
-- **Auto-Kalibrering med AI & Datorseende**: Automatisk identifiering av tavlan via cirkeldetektering (HoughCircles) samt visuell analys med Google Gemini Vision.
-- **Auto-Zoom & Zoom-reglage**: Zoomfunktion optimerad för mobilen som anpassar synfältet så att tavlan fyller skärmen med maximal precision.
-- **Vision View vs Live View**: Växla smidigt mellan direkt videoström ("Live View") och den perspektivkorrigerade 2D-vyn ("Vision View") för att i detalj granska var datorseendet beräknar att pilarna har träffat.
-- **Automatisk 501-spelläge**: Poängavräkning, historik över kastade pilar och automatisk omgångsväxling.
+Automatisk poängräkning för dart via mobilens kamera. **Allt körs lokalt i
+webbläsaren** — ingen server, ingen backend, inga API-nycklar, ingen löpande
+kostnad.
 
 ---
 
-## 🔒 Säkerhet & Miljövariabler (Inför synkning till GitHub)
+## Status
 
-Projektet är konfigurerat enligt "Secure-by-Design":
+Under ombyggnad. Grunden är städad och matematiken är verifierad, men
+pilspetsdetekteringen och den automatiska kalibreringen är ännu inte klara.
+Se [AGENT.md](./AGENT.md) för arkitektur och vad som återstår.
 
-1. **Inga hårkodade nycklar i koden**:
-   - Inga API-nycklar, tokens eller lösenord finns i källkoden (`src/` eller `server.ts`).
-2. **Server-Side API Proxy**:
-   - Eventuella anrop mot Gemini API sker uteslutande via backend (`/api/analyze-board` i `server.ts`). API-nyckeln skickas aldrig till webbläsaren.
-3. **`.gitignore` skyddar hemligheter**:
-   - Alla lokala miljöfiler (`.env`, `.env.local`, `.env.production`) ignoreras automatiskt av Git och kommer **inte** att laddas upp till GitHub.
-   - Endast `.env.example` (som innehåller ofarliga platshållare) checkas in.
+**Fungerar i dag:** manuell 4-punktskalibrering, perspektivkorrigering,
+poängberäkning enligt officiella mått, 501-spelläge, uppläsning av poäng.
 
----
-
-## 🛠️ Teknikstack
-
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS v4, Lucide Icons, Motion.
-- **Datorseende**: OpenCV.js (laddas asynkront och beräknar homografi, rörelse och pilspetsar lokalt i webbläsaren).
-- **Backend / API Proxy**: Node.js & Express.
-- **AI-modell**: `@google/genai` (Google Gemini 3.6 Flash) för smart bildanalys av tavlans orientering.
+**Fungerar ännu inte bra:** automatisk detektering av tavlan (hittar ofta fel
+cirkel, kan inte avgöra rotation) och pilspetsen (använder en förenklad metod
+som plockar fel punkt när pilen ligger på tvären).
 
 ---
 
-## 🚀 Kom igång lokalt
+## Kom igång
 
-### Förutsättningar
-- [Node.js](https://nodejs.org/) (version 18 eller senare)
-- npm, yarn, pnpm eller bun
+```bash
+npm install
+npm run dev
+```
 
-### Installation
+Öppna http://localhost:5173.
 
-1. **Klona repot**:
-   ```bash
-   git clone https://github.com/DITT-ANVÄNDARNAMN/kps-dartapp.git
-   cd kps-dartapp
-   ```
+Vill du testa från telefonen på samma nät kör `npm run dev -- --host`. Tänk på
+att **kameran kräver HTTPS** — webbläsare tillåter bara `getUserMedia` över
+https:// eller på localhost. Använd `mkcert` för ett lokalt certifikat, eller
+testa mot den publicerade Pages-versionen.
 
-2. **Installera beroenden**:
-   ```bash
-   npm install
-   ```
+```bash
+npm test          # 60 tester, mest poänggeometri
+npm run lint      # tsc --noEmit, strict mode
+npm run build     # produktionsbygge till dist/
+```
 
-3. **Konfigurera miljövariabler**:
-   Skapa en `.env`-fil baserad på mallen:
-   ```bash
-   cp .env.example .env
-   ```
-   Öppna `.env` och ange din Google Gemini API-nyckel om du vill använda AI-assisterad autokalibrering:
-   ```env
-   GEMINI_API_KEY=din_gemini_api_nyckel_här
-   ```
-   *(Obs: Appen och grundläggande manuell/lokal OpenCV-kalibrering fungerar även utan API-nyckel).*
-
-4. **Starta utvecklingsservern**:
-   ```bash
-   npm run dev
-   ```
-   Appen startar på [http://localhost:3000](http://localhost:3000).
+`npm run opencv` kopierar `opencv.js` från npm-paketet till `public/`. Det körs
+automatiskt av `dev` och `build`, så du behöver sällan tänka på det.
 
 ---
 
-## 📱 Tips för bästa träffsäkerhet
+## Publicering
 
-1. **Belysning**: Se till att darttavlan är jämnt upplyst utan starka skuggor över siffrorna.
-2. **Kameravinkel**: Rikta mobilkameran mot tavlans mitt. Även om homografin hanterar vinklar ger en relativt rak vinkel bäst precision.
-3. **Auto-Zoom**: Använd zoomreglaget eller klicka på **Auto-Zoom** så att tavlan täcker större delen av skärmytan. Detta ger fler pixlar per dartsektor och märkbart bättre noggrannhet.
-4. **Vision View**: Om en pil registreras felaktigt, slå över till **Vision View** för att se referensbilden och exakt var OpenCV placerade pilspetsens koordinater.
+Pushar du till `main` kör GitHub Actions testerna och deployar till GitHub
+Pages. Aktivera det under **Settings → Pages → Source: GitHub Actions**.
+
+Appen är en PWA och kan installeras på hemskärmen på både iPhone och Android.
 
 ---
 
-## 📜 Licens
+## Så funkar det
 
-Detta projekt är öppen källkod under MIT-licens.
+1. **Kalibrering.** Du placerar fyra punkter på dubbelringens ytterkant vid
+   sektor 20, 6, 3 och 11. Ur dem beräknas en homografi som "plattar ut" tavlan
+   till en 800×800-bild rakt framifrån.
+2. **Detektering.** Varje bildruta jämförs med en referensbild. När något
+   dykt upp och bilden stått still i 500 ms analyseras skillnaden som en pil.
+3. **Poäng.** Spetsens position räknas om till millimeter från bullseye och
+   jämförs med de officiella ringmåtten.
+
+### Koordinatsystem
+
+Detta är den viktigaste konventionen i hela kodbasen:
+
+| | |
+|---|---|
+| Kanoniska koordinater | millimeter, bullseye i `(0, 0)`, Y växer nedåt |
+| Dubbelringens ytterkant | 170 mm — det är hit kalibreringspunkterna sätts |
+| Warpad bild | 800 × 800 px, alltså radie 400 px = 170 mm |
+| Skala | 0,425 mm/px |
+
+**Räkna aldrig poäng i pixlar.** Alla mått och trösklar bor i `BOARD_MM` i
+`src/utils/dartMath.ts` och konverteras därifrån. Den ursprungliga versionen
+hade hårdkodade pixelradier som var systematiskt fel — 6,4 mm av dubbelringens
+8 mm klassades som MISS. Testerna i `dartMath.test.ts` vaktar mot att det
+återuppstår.
+
+---
+
+## Tips för bästa träffsäkerhet
+
+- **Stativ.** Telefonen måste stå still. Rörelsedetekteringen tolkar en
+  handhållen kamera som ständig rörelse och registrerar då inga kast.
+- **Jämn belysning** utan hårda skuggor över tavlan.
+- **Rak vinkel.** Homografin hanterar sneda vinklar, men ju rakare desto bättre.
+- **Kalibrera om** om telefonen flyttat sig, även lite.
+
+---
+
+## Teknik
+
+- React 19, TypeScript (strict), Vite, Tailwind CSS v4
+- OpenCV.js 4.12, självhostad och körd i webbläsaren via WASM
+- Vitest
+- Ingen backend, inga externa API-anrop, ingen telemetri
+
+Kamerabilder lämnar aldrig telefonen.
+
+---
+
+## Licens
+
+MIT.
