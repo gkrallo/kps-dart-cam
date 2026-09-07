@@ -17,7 +17,9 @@ const OPENCV_URL = `${import.meta.env.BASE_URL}opencv.js`;
  * Laddningen ligger i en modulnivå-promise, inte inne i effekten. Den gamla
  * varianten hoppade ur med `if (document.getElementById(id)) return;` när
  * komponenten monterades om, och satte då aldrig isLoaded - appen kunde fastna
- * på "Laddar datorseende-motor".
+ * på "Laddar datorseende-motor". Efter att skriptet laddats pollar vi på
+ * `window.cv.Mat` med en 30 s-timeout i stället för att haka på
+ * `onRuntimeInitialized`, som kan ha hunnit avfyras redan innan `onload`.
  */
 let loader: Promise<any> | null = null;
 
@@ -35,31 +37,31 @@ function loadOpenCV(): Promise<any> {
     script.async = true;
 
     script.onload = () => {
-      const ready = () => resolve(window.cv);
-
-      // opencv.js exponerar sig på tre olika sätt beroende på build.
-      if (window.cv?.Mat) return ready();
+      // Nyare emscripten-byggen lägger en Promise på window.cv; packa upp
+      // den till modulobjektet så att pollningen nedan ser rätt värde.
       if (window.cv instanceof Promise) {
         window.cv.then((mod: any) => {
           window.cv = mod;
-          ready();
         }).catch(reject);
-        return;
-      }
-      if (window.cv) {
-        window.cv.onRuntimeInitialized = ready;
-        return;
       }
 
-      // Sista utvägen: polla tills WASM-modulen är på plats.
+      // cv.Mat är den enda "klar"-signalen som finns i alla bygg-varianter.
+      // Vi kan inte lita på onRuntimeInitialized här: WASM-runtimen kan
+      // redan ha initierats när load-eventet kommer, och då avfyras aldrig
+      // en callback vi hakar på i efterhand - det var det som gjorde att
+      // appen kunde fastna på "Laddar datorseende-motor". Polla i stället.
       const started = Date.now();
       const poll = window.setInterval(() => {
         if (window.cv?.Mat) {
           window.clearInterval(poll);
-          ready();
+          resolve(window.cv);
         } else if (Date.now() - started > 30000) {
           window.clearInterval(poll);
-          reject(new Error('OpenCV.js hann inte initieras inom 30 sekunder.'));
+          reject(
+            new Error(
+              'OpenCV.js laddades men datorseende-motorn initierades inte inom 30 sekunder.',
+            ),
+          );
         }
       }, 100);
     };
