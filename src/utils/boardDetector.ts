@@ -215,40 +215,57 @@ export function autoDetectBoardEllipse(
     const bound = (h: number, s: number, v: number) =>
       track(new cv.Mat(vh, vw, hsv.type(), [h, s, v, 0]));
 
-    // Röd ligger vid båda ändarna av H-skalan (0-180 i OpenCV).
+    // Röd ligger vid båda ändarna av H-skalan (0-180 i OpenCV). Trösklarna är
+    // avsiktligt tillåtande: på ett verkligt foto (utomhus, en strålkastare) är
+    // ringens färg sliten och delvis i skugga.
     const redA = track(new cv.Mat());
     const redB = track(new cv.Mat());
     const green = track(new cv.Mat());
-    cv.inRange(hsv, bound(0, 80, 60), bound(12, 255, 255), redA);
-    cv.inRange(hsv, bound(168, 80, 60), bound(180, 255, 255), redB);
-    cv.inRange(hsv, bound(36, 60, 45), bound(92, 255, 255), green);
+    cv.inRange(hsv, bound(0, 70, 55), bound(13, 255, 255), redA);
+    cv.inRange(hsv, bound(167, 70, 55), bound(180, 255, 255), redB);
+    cv.inRange(hsv, bound(36, 55, 45), bound(92, 255, 255), green);
 
     const mask = track(new cv.Mat());
     cv.bitwise_or(redA, redB, mask);
     cv.bitwise_or(mask, green, mask);
 
     const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5)));
-    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+    // Kraftig close: den slitna, trådbrutna ringen blir en sammanhängande kontur.
+    const bigKernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(11, 11)));
+    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, bigKernel);
     cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
 
     const contours = track(new cv.MatVector());
     const hierarchy = track(new cv.Mat());
     cv.findContours(mask, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
 
-    // Kandidatellipser: alla konturer med tillräckligt många punkter och area.
-    const minArea = 0.01 * vw * vh;
-    const candidates: { ellipse: Ellipse; area: number }[] = [];
+    // Kandidatellipser. En darttavlas ring är rund och ungefär centrerad i
+    // bilden (användaren siktar kameran mot den). Rödbrunt trädäck och
+    // pilfenor bildar däremot avlånga fläckar ute i kanterna - därför
+    // fyrkantighets- och centrumfiltren nedan.
+    const minDim = Math.min(vw, vh);
+    const frameCx = vw / 2;
+    const frameCy = vh / 2;
+    const candidates: { ellipse: Ellipse; area: number; r: number }[] = [];
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i);
       if (c.rows < 15) continue;
       const area = cv.contourArea(c);
-      if (area < minArea) continue;
+      if (area < 0.01 * vw * vh) continue;
       const rr = cv.fitEllipse(c);
       const w = rr.size.width;
       const h = rr.size.height;
       if (w < 10 || h < 10) continue;
+
       const aspect = Math.min(w, h) / Math.max(w, h);
-      if (aspect < 0.3) continue; // för avlångt för att vara en tavelring sedd snett
+      if (aspect < 0.55) continue; // en ring är fortfarande ganska rund sedd snett
+
+      const r = Math.max(w, h) / 2;
+      if (r < 0.08 * minDim || r > 0.7 * minDim) continue;
+
+      // Förkasta ellipser vars centrum ligger i bildens ytterkant.
+      if (Math.hypot(rr.center.x - frameCx, rr.center.y - frameCy) > 0.42 * minDim) continue;
+
       candidates.push({
         ellipse: {
           cx: rr.center.x,
@@ -258,21 +275,21 @@ export function autoDetectBoardEllipse(
           theta: (rr.angle * Math.PI) / 180,
         },
         area,
+        r,
       });
     }
 
     if (candidates.length === 0) return null;
-    candidates.sort((a, b) => b.area - a.area);
+    candidates.sort((a, b) => b.r - a.r); // störst radie = dubbelringen
 
     const outer = candidates[0].ellipse;
-    const outerR = Math.max(outer.rx, outer.ry);
-    // Trippelringen: en mindre, ungefär koncentrisk ellips (~0.63 * dubbelringen).
+    const outerR = candidates[0].r;
+    // Trippelringen: en mindre, ungefär koncentrisk ellips (~0.63 × dubbelringen).
     const inner = candidates
       .slice(1)
       .find((cand) => {
-        const r = Math.max(cand.ellipse.rx, cand.ellipse.ry);
         const centreOffset = Math.hypot(cand.ellipse.cx - outer.cx, cand.ellipse.cy - outer.cy);
-        return r > 0.45 * outerR && r < 0.8 * outerR && centreOffset < 0.25 * outerR;
+        return cand.r > 0.45 * outerR && cand.r < 0.82 * outerR && centreOffset < 0.25 * outerR;
       })?.ellipse;
 
     const rings: RingEllipse[] = [{ ellipse: outer, radiusMM: 170 }];

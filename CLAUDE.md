@@ -124,7 +124,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 146 tester
+npm test         # 156 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -149,8 +149,14 @@ genom en känd pinhole-kamera, med valfri linsdistorsion och seedat brus, och
 `projectDartSilhouette` projicerar en pil (3D-kropp) genom samma kamera. Det gör
 **kalibrering, ellipsanpassning, spetsdetektering och hela poängkedjan** testbara
 offline mot en känd sanning — se `homography.test.ts`, `boardEllipse.test.ts`,
-`dartTip.test.ts`, `parallax.test.ts`. Kvar att verifiera mot en riktig tavla:
-att färgsegmenteringen ger rena ring- och pilmasker i verklig belysning.
+`dartTip.test.ts`, `parallax.test.ts`.
+
+`realBoard.test.ts` går ett steg längre: `__tests__/fixtures/outdoor-board.jpg`
+är ett riktigt foto av Kristians slitna utomhustavla (kväll, en strålkastare,
+snett sedd). Testet kör inte OpenCV men matar den rena geometrikedjan med
+faktiska röd/grön-maskpixlar ur fotot — verklig optik, verklig tavla. Kvar att
+verifiera på riktig hårdvara: OpenCV-delen (färgmask → kontur → ellips) och att
+pilmasken blir ren i verklig belysning.
 
 ---
 
@@ -261,11 +267,11 @@ inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 | Punktvalidering | 0.5–1.5 × medianavstånd | `boardDetector` | **Satt av oss**, avsiktligt tillåtande för att inte förkasta sneda kameravinklar. |
 | Morfologikärna | ellips 3×3 | `useDartDetector` | Satt av oss. Minsta rimliga. |
 | Blur | Gauss 5×5 | `useDartDetector` | Ärvd storlek, men flyttad till rätt plats i kedjan. |
-| Ring-färgmask (HSV) | röd H<12 ∪ H>168, grön H 36–92, S≥60–80, V≥45–60 | `boardDetector` | **Satt av oss** för `autoDetectBoardEllipse`. Inte intrimmad mot en riktig tavla i verklig belysning. |
-| Trippelring-matchning | 0.45–0.8 × dubbelringen, centrum inom 0.25× | `boardDetector` | **Satt av oss.** Geometrin (`boardEllipse.ts`) är testad; det som är otestat är att hitta rätt kontur. |
+| Ring-färgmask (HSV) | röd H<13 ∪ H>167, grön H 36–92, S≥55–70, V≥45–55 | `boardDetector` | **Satt av oss.** Tillåtande — bekräftat mot fotot i `realBoard.test.ts` att röd/grön-masken plockar ut ringarna även på en sliten tavla i skugga. Kan behöva justeras för din belysning. |
+| Ellipsval | fyrkantighet ≥ 0.55, centrum inom 0.42 × min(bild) | `boardDetector` | **Satt av oss.** Fotot visade att rödbrunt trädäck matchar "röd" bättre än den slitna ringen — "största konturen" låste på däcket. En ring är rund och nära bildmitten; däck och pilfenor är avlånga fläckar i kanten. |
 
 Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin och spetsdetekteringen — 146 tester, delvis mot den syntetiska
+ellipsgeometrin och spetsdetekteringen — 156 tester, delvis mot den syntetiska
 tavlan.
 
 ---

@@ -96,12 +96,17 @@ perspektivförkortningen; radiellt fel < 1 mm även vid brant kameravinkel
 
 **Rotationen kan inte bestämmas** av ringarna (rotationssymmetriska) eller
 färgmönstret (periodiskt). `orientToImageUp` gissar "20 i toppen" — några graders
-fel under gir/roll. `calibration.ts` löser resten: "Peka ut 20:an" i
-`CalibrationOverlay` roterar kalibreringspunkternas ordning efter ett grovt
-tryck (`rotateCalibrationToAnchor`), och hela kalibreringen sparas i
-`localStorage` (som andelar av containern) och återställs nästa gång.
-Färgtrösklarna i `autoDetectBoardEllipse` är inte intrimmade mot en riktig
-tavla ännu.
+fel under gir/roll. `orientCalibrationToward(calib, punkt)` vrider gauge:n mot en
+utpekad 20-position. `calibration.ts` gör motsvarande på de fyra punkterna
+(`rotateCalibrationToAnchor`, "Peka ut 20:an"-knappen), och hela kalibreringen
+sparas i `localStorage` och återställs nästa gång.
+
+Ett riktigt foto (`__tests__/fixtures/outdoor-board.jpg`) visade att röd/grön-
+masken plockar ut ringarna bra även på en sliten tavla i skugga — men att det
+rödbruna trädäcket matchar "röd" bättre än ringen, så "största konturen" i
+`autoDetectBoardEllipse` låste på däcket. Åtgärdat: konturer filtreras nu på
+fyrkantighet och närhet till bildmitten. OpenCV-delen är dock fortfarande bara
+verifierad via Python-simulering, inte på riktig hårdvara.
 
 ### Sammanslagna pilar
 Största konturen tas alltid. Två pilar som sitter ihop ger en spets. Bör jämföra

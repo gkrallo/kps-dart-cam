@@ -244,13 +244,20 @@ export function calibrationFromRingEllipses(
 }
 
 /**
- * Vrider kalibreringens rotationsgauge så att board-uppåt (0,-170) projiceras
- * så lodrätt uppåt som möjligt i bilden - antagandet "20 sitter nära toppen".
- * Robust mot kamerans roll: den letar efter den board-riktning som projiceras
- * närmast lodrätt, inte bara den högsta punkten (som flyttas av roll och gir).
+ * Vrider kalibreringens rotationsgauge så att board-uppåt (0,-170) projiceras i
+ * riktning mot `targetImagePoint` sett från tavlans mitt. Snäpper kontinuerligt
+ * (inte till 90-graderssteg). Använd `orientToImageUp` när du bara antar
+ * "20 nära toppen", och den här när användaren pekat ut 20:an.
  */
-export function orientToImageUp(calib: BoardCalibration): BoardCalibration {
+export function orientCalibrationToward(
+  calib: BoardCalibration,
+  targetImagePoint: Point,
+): BoardCalibration {
   const centre = calib.project(0, 0);
+  const targetAngle = Math.atan2(
+    targetImagePoint.y - centre.y,
+    targetImagePoint.x - centre.x,
+  );
   let bestDelta = 0;
   let bestDeviation = Infinity;
   const STEPS = 3600;
@@ -258,7 +265,8 @@ export function orientToImageUp(calib: BoardCalibration): BoardCalibration {
     const d = (i / STEPS) * 2 * Math.PI;
     // (0,-170) roterad med d: (170 sin d, -170 cos d)
     const p = calib.project(170 * Math.sin(d), -170 * Math.cos(d));
-    const deviation = Math.abs(Math.atan2(p.x - centre.x, -(p.y - centre.y)));
+    const ang = Math.atan2(p.y - centre.y, p.x - centre.x);
+    const deviation = Math.abs(Math.atan2(Math.sin(ang - targetAngle), Math.cos(ang - targetAngle)));
     if (deviation < bestDeviation) {
       bestDeviation = deviation;
       bestDelta = d;
@@ -267,6 +275,15 @@ export function orientToImageUp(calib: BoardCalibration): BoardCalibration {
 
   const rotated = multiplyMat3(calib.H, rotationMat3(bestDelta));
   return calibrationFromH(rotated, calib.residualPx, calib.maxResidualPx) ?? calib;
+}
+
+/**
+ * Som `orientCalibrationToward` men mot lodrätt uppåt i bilden - antagandet
+ * "20 sitter nära toppen". Robust mot kamerans roll.
+ */
+export function orientToImageUp(calib: BoardCalibration): BoardCalibration {
+  const centre = calib.project(0, 0);
+  return orientCalibrationToward(calib, { x: centre.x, y: centre.y - 1000 });
 }
 
 /** De fyra kalibreringspunkterna [topp 20, höger 6, botten 3, vänster 11] i bilden. */
