@@ -100,7 +100,8 @@ src/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
     homography.ts             DLT + Levenberg-Marquardt-lösare (N punkter, residual)
     boardProjection.ts        Homografi fram/bak, SVG-projektion, computeCalibration
-    boardDetector.ts          Automatisk tavledetektering (HoughCircles)
+    boardEllipse.ts           Ellipsanpassning + kalibrering ur ringellipser
+    boardDetector.ts          Autodetektering: ellipsmetod + HoughCircles-fallback
     syntheticBoard.ts         Renderar en exakt tavla genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
     __tests__/                Vitest
@@ -121,7 +122,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 60 tester
+npm test         # 125 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -249,9 +250,11 @@ inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 | Punktvalidering | 0.5–1.5 × medianavstånd | `boardDetector` | **Satt av oss**, avsiktligt tillåtande för att inte förkasta sneda kameravinklar. |
 | Morfologikärna | ellips 3×3 | `useDartDetector` | Satt av oss. Minsta rimliga. |
 | Blur | Gauss 5×5 | `useDartDetector` | Ärvd storlek, men flyttad till rätt plats i kedjan. |
+| Ring-färgmask (HSV) | röd H<12 ∪ H>168, grön H 36–92, S≥60–80, V≥45–60 | `boardDetector` | **Satt av oss** för `autoDetectBoardEllipse`. Inte intrimmad mot en riktig tavla i verklig belysning. |
+| Trippelring-matchning | 0.45–0.8 × dubbelringen, centrum inom 0.25× | `boardDetector` | **Satt av oss.** Geometrin (`boardEllipse.ts`) är testad; det som är otestat är att hitta rätt kontur. |
 
-Det enda som är verifierat exakt är `BOARD_MM` och koordinatkonverteringarna.
-Dessa täcks av 60 tester.
+Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren och
+ellipsgeometrin — 125 tester, delvis mot den syntetiska tavlan.
 
 ---
 

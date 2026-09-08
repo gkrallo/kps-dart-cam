@@ -5,7 +5,7 @@ import {
   generateProjectedCircleSVG,
   getSectorBoundaryAngles,
 } from '../utils/boardProjection';
-import { autoDetectBoardOpenCV } from '../utils/boardDetector';
+import { autoDetectBoardEllipse, autoDetectBoardOpenCV } from '../utils/boardDetector';
 import type { ZoomCapability } from './CameraFeed';
 import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw } from 'lucide-react';
 
@@ -111,7 +111,11 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     // requestAnimationFrame så att skann-overlayen hinner ritas ut innan
     // OpenCV blockerar huvudtråden.
     requestAnimationFrame(() => {
-      const detected = autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight);
+      // Ellipsmetoden klarar sneda kameravinklar; HoughCircles (cirkel-antagande)
+      // är fallback om färgsegmenteringen inte hittar ringarna.
+      const detected =
+        autoDetectBoardEllipse(cv, videoElement, containerWidth, containerHeight) ??
+        autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight);
 
       if (detected) {
         setPoints(detected);

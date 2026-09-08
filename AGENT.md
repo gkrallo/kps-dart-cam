@@ -31,7 +31,8 @@ src/
     dartMath.ts                ★ Mått, koordinatsystem, poängberäkning
     homography.ts              DLT + Levenberg-Marquardt (N punkter, reprojektionsresidual)
     boardProjection.ts         Homografi fram och bak, SVG-projektion, computeCalibration
-    boardDetector.ts           Automatisk tavledetektering (HoughCircles)
+    boardEllipse.ts            Ellipsanpassning + kalibrering ur ringellipser
+    boardDetector.ts           Autodetektering: ellipsmetod + HoughCircles-fallback
     syntheticBoard.ts          Exakt tavla renderad genom en känd kamera (offline-testning)
     audioEngine.ts             Ljudeffekt + svensk TTS
     __tests__/                 Vitest
@@ -78,22 +79,25 @@ försvann". När pilarna dras ur registreras spökkast. Behöver riktad subtrakt
 eller ett explicit "tavla rensad"-läge.
 
 ### Kalibrering
-`computeCalibration` (`boardProjection.ts` + `homography.ts`) är nu en
-överbestämd lösare: DLT-startgissning, sedan Levenberg-Marquardt som minimerar
+`computeCalibration` (`boardProjection.ts` + `homography.ts`) är en överbestämd
+lösare: DLT-startgissning, sedan Levenberg-Marquardt som minimerar
 reprojektionsfelet, och den returnerar en residual i px. Den tar N ≥ 4 par.
 `App.tsx` använder fortfarande `cv.getPerspectiveTransform` på exakt fyra punkter
 för själva warpen — nästa steg är att låta även warpen gå genom `computeCalibration`
 med fler, grovt utpekade punkter (kräver riktig tavla för att verifiera).
 
-`HoughCircles`-autodetekteringen antar fortfarande cirkel — den är en ellips så
-fort kameran står snett — och **rotationen kan inte bestämmas** av färgmönstret
-ensamt (periodiskt: roterar du två sektorer ser tavlan likadan ut).
+`boardEllipse.ts` + `autoDetectBoardEllipse` är den nya autodetekteringen:
+`fitEllipse` (Sampson-omviktad) på dubbel- och trippelringens färgmask →
+`calibrationFromRingEllipses` som iterativt återställer perspektivet. Två
+koncentriska ringar med kända radier (170/107 mm) pinnar
+perspektivförkortningen; radiellt fel < 1 mm även vid brant kameravinkel
+(verifierat i `boardEllipse.test.ts`). `HoughCircles` finns kvar som fallback.
 
-Planerad lösning: `fitEllipse` på ringens färgmask → polär utveckling (då blir
-ringarna horisontella linjer och sektortrådarna vertikala) → `computeCalibration`
-med ringpixlarna → **rotationsankare som användaren sätter med ett grovt tryck**
-och som sparas i `localStorage`. `syntheticBoard.ts` gör varje steg testbart utan
-tavla.
+**Rotationen kan inte bestämmas** av ringarna (rotationssymmetriska) eller
+färgmönstret (periodiskt). `orientToImageUp` gissar "20 i toppen" — några graders
+fel under gir/roll. Steg 4: användaren bekräftar med ett grovt tryck; ankaret
+sparas i `localStorage`. Färgtrösklarna i `autoDetectBoardEllipse` är inte
+intrimmade mot en riktig tavla ännu.
 
 ### Sammanslagna pilar
 Största konturen tas alltid. Två pilar som sitter ihop ger en spets. Bör jämföra
@@ -101,17 +105,21 @@ ny mask mot föregående och isolera det tillkomna området.
 
 ## Att göra
 
-1. Spetsdetektering med axelanpassning, utförd i rå kamerabild
+1. **Spetsdetektering med axelanpassning, utförd i rå kamerabild.** Nu prioriterat:
+   parallaxmätningen (`parallax.test.ts`) visar att "punkten närmast mitten" ger
+   6+ mm fel (24 mm vid dubbelringen) när pilen lutar ~15° från linsen, och att
+   kameravinkeln inte hjälper. Med exakt spets är felet ~0.
 2. Tap-to-correct: rätta en feltolkad pil genom att trycka i Vision View
 3. Hantera uttagning av pilar
-4. Lokal kalibrering: ellips → polär utveckling → `computeCalibration` med
-   ringpixlar → sparat rotationsankare i `localStorage`. Solvern (steg 1 klart:
-   `homography.ts`) och offline-fixturen (`syntheticBoard.ts`) finns redan.
-5. Mät pilens parallax med `syntheticBoard.ts` (pil som 3D-segment mot kameran):
-   avgör om en kamera räcker eller om vinkeln måste vara brant uppifrån.
-6. Farfar-regelmotor, delad med `kps-dart-scorecard`
-7. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas)
-8. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för steg 1 och 4
+4. Rotationsankare: användaren pekar grovt ut 20:an en gång → sparas i
+   `localStorage`. Ellips-autodetekteringen (`boardEllipse.ts`) ger redan
+   perspektiv + skala; det som saknas är rotationen.
+5. Farfar-regelmotor, delad med `kps-dart-scorecard`
+6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas)
+7. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för steg 1 och 4
+
+Parallax (mätt, klart): en kamera räcker bara om spetsen detekteras i råbilden
+eller om två kameror används. Kameraplacering löser det inte.
 
 ## Fallgropar
 

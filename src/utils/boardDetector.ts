@@ -1,4 +1,11 @@
 import { Point } from '../types';
+import {
+  calibrationFromRingEllipses,
+  cardinalCalibrationPoints,
+  orientToImageUp,
+  type Ellipse,
+  type RingEllipse,
+} from './boardEllipse';
 
 function dist(p1: Point, p2: Point): number {
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -157,5 +164,147 @@ export function autoDetectBoardOpenCV(
     gray?.delete();
     blurred?.delete();
     circles?.delete();
+  }
+}
+
+/**
+ * Ellipsbaserad autodetektering.
+ *
+ * Färgsegmenterar dubbel- och trippelringen (rött + grönt), anpassar en ellips
+ * till var sin ring med `cv.fitEllipse`, och lämnar geometrin till
+ * `calibrationFromRingEllipses` som återställer perspektivet. Klarar sneda
+ * kameravinklar som `HoughCircles` inte kan (den hittar bara cirklar).
+ *
+ * Färgtrösklarna nedan är rimliga startvärden, inte intrimmade mot en riktig
+ * tavla i verklig belysning - det steget kräver hårdvara. Hittas bara en ring
+ * används den ensam (mindre exakt radiellt men fortfarande lutningsmedveten).
+ * Rotationen (vilken sektor som är 20) är en grov gissning "20 i toppen" som
+ * användaren bekräftar.
+ */
+export function autoDetectBoardEllipse(
+  cv: any,
+  videoElement: HTMLVideoElement,
+  containerWidth: number,
+  containerHeight: number,
+): Point[] | null {
+  if (!cv || !videoElement || videoElement.videoWidth === 0) return null;
+
+  const vw = videoElement.videoWidth;
+  const vh = videoElement.videoHeight;
+  const mats: any[] = [];
+  const track = <T,>(m: T): T => {
+    mats.push(m);
+    return m;
+  };
+
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = vw;
+    canvas.height = vh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(videoElement, 0, 0, vw, vh);
+
+    const src = track(cv.imread(canvas));
+    const rgb = track(new cv.Mat());
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+    const hsv = track(new cv.Mat());
+    cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
+
+    // inRange i opencv.js vill ha gränserna som Mat:er i full storlek.
+    const bound = (h: number, s: number, v: number) =>
+      track(new cv.Mat(vh, vw, hsv.type(), [h, s, v, 0]));
+
+    // Röd ligger vid båda ändarna av H-skalan (0-180 i OpenCV).
+    const redA = track(new cv.Mat());
+    const redB = track(new cv.Mat());
+    const green = track(new cv.Mat());
+    cv.inRange(hsv, bound(0, 80, 60), bound(12, 255, 255), redA);
+    cv.inRange(hsv, bound(168, 80, 60), bound(180, 255, 255), redB);
+    cv.inRange(hsv, bound(36, 60, 45), bound(92, 255, 255), green);
+
+    const mask = track(new cv.Mat());
+    cv.bitwise_or(redA, redB, mask);
+    cv.bitwise_or(mask, green, mask);
+
+    const kernel = track(cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5)));
+    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
+
+    const contours = track(new cv.MatVector());
+    const hierarchy = track(new cv.Mat());
+    cv.findContours(mask, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
+
+    // Kandidatellipser: alla konturer med tillräckligt många punkter och area.
+    const minArea = 0.01 * vw * vh;
+    const candidates: { ellipse: Ellipse; area: number }[] = [];
+    for (let i = 0; i < contours.size(); i++) {
+      const c = contours.get(i);
+      if (c.rows < 15) continue;
+      const area = cv.contourArea(c);
+      if (area < minArea) continue;
+      const rr = cv.fitEllipse(c);
+      const w = rr.size.width;
+      const h = rr.size.height;
+      if (w < 10 || h < 10) continue;
+      const aspect = Math.min(w, h) / Math.max(w, h);
+      if (aspect < 0.3) continue; // för avlångt för att vara en tavelring sedd snett
+      candidates.push({
+        ellipse: {
+          cx: rr.center.x,
+          cy: rr.center.y,
+          rx: w / 2,
+          ry: h / 2,
+          theta: (rr.angle * Math.PI) / 180,
+        },
+        area,
+      });
+    }
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => b.area - a.area);
+
+    const outer = candidates[0].ellipse;
+    const outerR = Math.max(outer.rx, outer.ry);
+    // Trippelringen: en mindre, ungefär koncentrisk ellips (~0.63 * dubbelringen).
+    const inner = candidates
+      .slice(1)
+      .find((cand) => {
+        const r = Math.max(cand.ellipse.rx, cand.ellipse.ry);
+        const centreOffset = Math.hypot(cand.ellipse.cx - outer.cx, cand.ellipse.cy - outer.cy);
+        return r > 0.45 * outerR && r < 0.8 * outerR && centreOffset < 0.25 * outerR;
+      })?.ellipse;
+
+    const rings: RingEllipse[] = [{ ellipse: outer, radiusMM: 170 }];
+    if (inner) rings.push({ ellipse: inner, radiusMM: 107 });
+
+    const calib = calibrationFromRingEllipses(rings);
+    if (!calib) return null;
+    const oriented = orientToImageUp(calib);
+    const [top, right, bottom, left] = cardinalCalibrationPoints(oriented);
+
+    // Videon visas med object-cover: skalad med max() och centrerad.
+    const scale = Math.max(containerWidth / vw, containerHeight / vh);
+    const offsetX = (containerWidth - vw * scale) / 2;
+    const offsetY = (containerHeight - vh * scale) / 2;
+    const toContainer = (p: Point): Point => ({
+      x: p.x * scale + offsetX,
+      y: p.y * scale + offsetY,
+    });
+
+    const pts = [toContainer(top), toContainer(right), toContainer(bottom), toContainer(left)];
+    const bull = oriented.project(0, 0);
+    return validateDartboardPoints(pts, toContainer(bull)) ? pts : null;
+  } catch (err) {
+    console.error('autoDetectBoardEllipse misslyckades:', err);
+    return null;
+  } finally {
+    for (const m of mats) {
+      try {
+        m.delete();
+      } catch {
+        /* redan raderad */
+      }
+    }
   }
 }

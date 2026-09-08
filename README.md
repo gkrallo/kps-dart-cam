@@ -36,7 +36,7 @@ https:// eller på localhost. Använd `mkcert` för ett lokalt certifikat, eller
 testa mot den publicerade Pages-versionen.
 
 ```bash
-npm test          # 60 tester, mest poänggeometri
+npm test          # 125 tester: poänggeometri, homografi, kalibrering
 npm run lint      # tsc --noEmit, strict mode
 npm run build     # produktionsbygge till dist/
 ```

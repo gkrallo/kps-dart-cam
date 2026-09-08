@@ -170,6 +170,8 @@ export interface SyntheticCameraPose {
 export interface SyntheticCamera {
   /** mm på tavlan -> pixel i bilden. */
   project: (X: number, Y: number) => Point;
+  /** mm i tavlans referenssystem (Z ut ur tavlan mot betraktaren) -> pixel. */
+  project3D: (X: number, Y: number, Z: number) => Point;
   /** pixel i bilden -> mm på tavlan (tavlans plan Z = 0). */
   unproject: (x: number, y: number) => Point;
 }
@@ -178,7 +180,7 @@ export interface SyntheticCamera {
  * Pinhole-kamera som tittar på tavlans plan. Tavlan ligger i Z = 0 med Y nedåt;
  * kameran sitter på +Z-axeln `distanceMM` bort och roteras med gir/nick/roll.
  * Detta är en riktig perspektivprojektion, inte bara en homografi - så den
- * duger även när vi senare vill modellera pilar som sticker ut ur planet.
+ * duger även när vi vill modellera pilar som sticker ut ur planet (parallax).
  */
 export function syntheticCamera(pose: SyntheticCameraPose = {}): SyntheticCamera {
   const dist = pose.distanceMM ?? 2500;
@@ -192,11 +194,12 @@ export function syntheticCamera(pose: SyntheticCameraPose = {}): SyntheticCamera
   const Rt = transpose(R);
   const t: Vec3 = [0, 0, dist];
 
-  const project = (X: number, Y: number): Point => {
-    const pc = matVec(R, [X, Y, 0]);
+  const project3D = (X: number, Y: number, Z: number): Point => {
+    const pc = matVec(R, [X, Y, Z]);
     const z = pc[2] + t[2];
     return { x: pp.x + (f * (pc[0] + t[0])) / z, y: pp.y + (f * (pc[1] + t[1])) / z };
   };
+  const project = (X: number, Y: number): Point => project3D(X, Y, 0);
 
   const unproject = (x: number, y: number): Point => {
     const dir: Vec3 = [(x - pp.x) / f, (y - pp.y) / f, 1];
@@ -212,7 +215,7 @@ export function syntheticCamera(pose: SyntheticCameraPose = {}): SyntheticCamera
     return { x: pBoard[0], y: pBoard[1] };
   };
 
-  return { project, unproject };
+  return { project, project3D, unproject };
 }
 
 export interface RenderOptions {
