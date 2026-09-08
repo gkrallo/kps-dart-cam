@@ -102,7 +102,9 @@ src/
     boardProjection.ts        Homografi fram/bak, SVG-projektion, computeCalibration
     boardEllipse.ts           Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts          Autodetektering: ellipsmetod + HoughCircles-fallback
-    syntheticBoard.ts         Renderar en exakt tavla genom en känd kamera (test/felsökning)
+    dartTip.ts                Spetsdetektering: axelanpassning (PCA) + breddtest
+    calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
+    syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
     __tests__/                Vitest
 
@@ -122,7 +124,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 125 tester
+npm test         # 146 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -143,11 +145,12 @@ Pages-versionen är oftast enklast.
 Poänggeometrin är helt testbar utan kamera — det är ren matematik. Kör `npm test`.
 
 `syntheticBoard.ts` renderar dessutom en geometriskt exakt tavla (samma `BOARD_MM`)
-genom en känd pinhole-kamera, med valfri linsdistorsion och seedat brus. Det gör
-**kalibrering, ellipsanpassning och hela poängkedjan** testbara offline mot en känd
-sanning — se `homography.test.ts`, `syntheticBoard.test.ts` och kalibreringsfallen
-i `pipeline.test.ts`. Kvar att verifiera mot en riktig tavla: verkliga pilblobbar,
-verklig linsoptik, och pilens parallax (den sticker ut ur tavlans plan).
+genom en känd pinhole-kamera, med valfri linsdistorsion och seedat brus, och
+`projectDartSilhouette` projicerar en pil (3D-kropp) genom samma kamera. Det gör
+**kalibrering, ellipsanpassning, spetsdetektering och hela poängkedjan** testbara
+offline mot en känd sanning — se `homography.test.ts`, `boardEllipse.test.ts`,
+`dartTip.test.ts`, `parallax.test.ts`. Kvar att verifiera mot en riktig tavla:
+att färgsegmenteringen ger rena ring- och pilmasker i verklig belysning.
 
 ---
 
@@ -212,21 +215,29 @@ doubleOuter 170
 
 ### Detekteringen
 
+Triggern (att en pil landat och står still) körs i den **warpade** bilden:
+
 ```
 kamera → warpPerspective(H) → gråskala → GaussianBlur
-   → absdiff mot baseline → tröskel → morfologi (open, close)
-   → största konturen → formkontroll → spetspunkt
-   → pixelToCanonical → getScoreFromCanonicalCoordinates → useDartGame
+   → absdiff mot baseline / mot föregående ruta → tröskel → countNonZero
 ```
-
-Två separata skillnadsmått körs varje bildruta:
 
 - **movementNoise** — mot föregående bildruta. Säger om något rör sig nu.
 - **baselineNoise** — mot referensbilden. Säger om något tillkommit sedan sist.
 
 En pil registreras när scenen är stilla (`movementNoise` under tröskeln) men
-skiljer sig från baseline, och har varit så i 500 ms. Därefter sätts en ny
-baseline så nästa pil syns som en ny skillnad.
+skiljer sig från baseline, och har varit så i 500 ms.
+
+Spetsen hittas däremot i den **råa** (owarpade) bilden — se `dartTip.ts` och
+fallgropen nedan:
+
+```
+rå gråskala → absdiff mot rå baseline → tröskel → morfologi → största konturen
+   → detectDartAxisTip (PCA-axel + breddtest)  |  fallback: tyngdpunkt
+   → perspectiveTransform(spets)  →  getScoreFromPixel  →  useDartGame
+```
+
+Därefter sätts nya baselines (warpad + rå) så nästa pil syns som en ny skillnad.
 
 ### Trösklar och parametrar — var ärlig om vad de är värda
 
@@ -253,8 +264,9 @@ inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 | Ring-färgmask (HSV) | röd H<12 ∪ H>168, grön H 36–92, S≥60–80, V≥45–60 | `boardDetector` | **Satt av oss** för `autoDetectBoardEllipse`. Inte intrimmad mot en riktig tavla i verklig belysning. |
 | Trippelring-matchning | 0.45–0.8 × dubbelringen, centrum inom 0.25× | `boardDetector` | **Satt av oss.** Geometrin (`boardEllipse.ts`) är testad; det som är otestat är att hitta rätt kontur. |
 
-Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren och
-ellipsgeometrin — 125 tester, delvis mot den syntetiska tavlan.
+Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
+ellipsgeometrin och spetsdetekteringen — 146 tester, delvis mot den syntetiska
+tavlan.
 
 ---
 
@@ -305,6 +317,13 @@ bara bilden utan att tillföra en enda pixel.
 symmetri. Det förstörde perspektivinformationen: en tavla sedd snett *ska* vara
 osymmetrisk, och speglingen gjorde fyrhörningen till ett parallellogram så
 homografin blev affin. Det finns ett test som vaktar detta.
+
+**Spetsen hittas i RÅ bild, triggern i warpad.** `useDartDetector` håller två
+baselines (`baseline` warpad, `rawBaseline` rå) och två absdiff-kedjor. Det ser
+redundant ut men är avsiktligt: i den warpade bilden är pilkroppen utsmetad
+eftersom den sticker ut ur tavlans plan, så axeln man anpassar där är inte
+pilens axel. Bara den färdiga spetspunkten warpas (`cv.perspectiveTransform`).
+Se `parallax.test.ts` för varför det spelar roll (6+ mm fel annars).
 
 **Callbacks ligger i refs, inte i dependency-arrayen.** `useDartDetector` tar
 emot `onDartDetected` men lägger den i en ref och utesluter den ur `useEffect`.
@@ -366,18 +385,15 @@ hänsyn till.
 
 Se `AGENT.md` för detaljer och planerad lösning. Kort:
 
-1. **Pilspetsen** hittas som "punkten på konturen närmast tavlans mitt". Det
-   plockar fel punkt när pilen ligger på tvären eller sitter nära bullen.
-   Ska ersättas av axelanpassning (`fitLine` + breddtest för att avgöra vilken
-   ände som är spetsen), utförd i **rå kamerabild** — inte i den warpade, där
-   pilkroppen är utsmetad eftersom den sticker ut ur tavlans plan.
+1. **Verklig verifiering saknas.** Geometrin (kalibrering, spetsdetektering,
+   poäng) är testad offline mot den syntetiska tavlan, men färgsegmenteringen —
+   ring­masken i `autoDetectBoardEllipse` och pilmasken i `useDartDetector` —
+   är inte prövad mot en riktig tavla i verklig belysning.
 2. **Uttagning av pilar** ger spökkast. `absdiff` är ett absolutbelopp och kan
    inte skilja "något dök upp" från "något försvann".
-3. **Automatisk kalibrering** antar cirkel (tavlan är en ellips sedd snett) och
-   kan inte avgöra rotationen. Tavlans färgmönster är periodiskt — roterar man
-   två sektorer ser den likadan ut — så färger och trådar ger sektorgränser men
-   aldrig vilken sektor som är 20. Planen är sparat engångsankare från
-   användaren.
-4. **Sammanslagna pilar** blir en kontur och ger en spets.
+3. **Sammanslagna pilar** blir en kontur och ger en spets.
+4. **Parallax** (mätt): en kamera räcker bara med spetsdetektering i råbilden
+   (finns nu) eller två kameror. Ett kvarvarande fel på några mm är oundvikligt
+   med en kamera när pilen lutar mycket.
 
-Nästa planerade steg är punkt 1.
+Nästa planerade steg: tap-to-correct i Vision View.

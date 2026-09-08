@@ -33,7 +33,9 @@ src/
     boardProjection.ts         Homografi fram och bak, SVG-projektion, computeCalibration
     boardEllipse.ts            Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts           Autodetektering: ellipsmetod + HoughCircles-fallback
-    syntheticBoard.ts          Exakt tavla renderad genom en känd kamera (offline-testning)
+    dartTip.ts                 Spetsdetektering: axelanpassning + breddtest
+    calibration.ts             Sparad kalibrering (localStorage) + rotationsankare
+    syntheticBoard.ts          Exakt tavla + pil renderad genom en känd kamera (offline-testning)
     audioEngine.ts             Ljudeffekt + svensk TTS
     __tests__/                 Vitest
 scripts/copy-opencv.mjs        Kopierar opencv.js från npm till public/
@@ -59,19 +61,18 @@ kamera → warpPerspective(H) → gråskala → absdiff mot baseline
 
 Ärlig lista över vad som inte är bra ännu.
 
-### Pilspetsen (`useDartDetector.ts`)
-Använder "punkten på konturen närmast tavlans mitt". Det håller bara när pilen
-pekar rakt utåt från centrum. Ligger pilen på tvären, eller sitter den nära
-bullen, plockas en punkt på skaftet eller fjädern.
+### Pilspetsen (`dartTip.ts`, `useDartDetector.ts`)
+`detectDartAxisTip` anpassar pilens axel med PCA, projicerar maskpunkterna på
+axeln för att hitta ändarna, och avgör vilken som är spetsen genom att mäta
+bredden vinkelrätt mot axeln (fenan är ~4× bredare). `useDartDetector` kör detta
+på maskpunkter från **rå kamerabild** — i den warpade är pilkroppen utsmetad
+eftersom den sticker ut ur planet — och warpar sedan bara den färdiga spetsen
+genom homografin.
 
-Två fel ska rättas samtidigt:
-1. **Ingen axel.** Ska bli: `fitLine` på maskpixlarna → projicera → de två
-   extremerna är pilens ändar → avgör vilken som är spetsen genom att mäta
-   bredden vinkelrätt mot axeln (fjädern är 2–3× bredare).
-2. **Fel bild.** Analysen görs i den *warpade* bilden. Homografin gäller bara
-   för punkter i tavlans plan, och pilkroppen sticker ut 10–15 cm — den warpade
-   pilen är en strimma vars riktning inte är pilens riktning. Detektering ska
-   ske i **rå kamerabild**, och bara den färdiga spetspunkten warpas.
+Fallback för en nästan frontal pil (rund blob, ingen tillförlitlig axel):
+blobbens tyngdpunkt. Parallaxen är liten när pilen pekar mot linsen, så det
+duger. Kvar att verifiera mot en riktig tavla: att färgsegmenteringen/masken
+faktiskt ger en ren pilkontur i verklig belysning.
 
 ### Uttagning av pilar
 `absdiff` är ett absolutbelopp och kan inte skilja "något dök upp" från "något
@@ -95,9 +96,12 @@ perspektivförkortningen; radiellt fel < 1 mm även vid brant kameravinkel
 
 **Rotationen kan inte bestämmas** av ringarna (rotationssymmetriska) eller
 färgmönstret (periodiskt). `orientToImageUp` gissar "20 i toppen" — några graders
-fel under gir/roll. Steg 4: användaren bekräftar med ett grovt tryck; ankaret
-sparas i `localStorage`. Färgtrösklarna i `autoDetectBoardEllipse` är inte
-intrimmade mot en riktig tavla ännu.
+fel under gir/roll. `calibration.ts` löser resten: "Peka ut 20:an" i
+`CalibrationOverlay` roterar kalibreringspunkternas ordning efter ett grovt
+tryck (`rotateCalibrationToAnchor`), och hela kalibreringen sparas i
+`localStorage` (som andelar av containern) och återställs nästa gång.
+Färgtrösklarna i `autoDetectBoardEllipse` är inte intrimmade mot en riktig
+tavla ännu.
 
 ### Sammanslagna pilar
 Största konturen tas alltid. Två pilar som sitter ihop ger en spets. Bör jämföra
@@ -105,21 +109,22 @@ ny mask mot föregående och isolera det tillkomna området.
 
 ## Att göra
 
-1. **Spetsdetektering med axelanpassning, utförd i rå kamerabild.** Nu prioriterat:
-   parallaxmätningen (`parallax.test.ts`) visar att "punkten närmast mitten" ger
-   6+ mm fel (24 mm vid dubbelringen) när pilen lutar ~15° från linsen, och att
-   kameravinkeln inte hjälper. Med exakt spets är felet ~0.
-2. Tap-to-correct: rätta en feltolkad pil genom att trycka i Vision View
-3. Hantera uttagning av pilar
-4. Rotationsankare: användaren pekar grovt ut 20:an en gång → sparas i
-   `localStorage`. Ellips-autodetekteringen (`boardEllipse.ts`) ger redan
-   perspektiv + skala; det som saknas är rotationen.
+1. Tap-to-correct: rätta en feltolkad pil genom att trycka i Vision View. Ger
+   också märkt data för framtida ML.
+2. Hantera uttagning av pilar (riktad subtraktion eller "tavla rensad"-läge)
+3. Trimma `autoDetectBoardEllipse`-färgtrösklarna mot en riktig tavla i verklig
+   belysning, och verifiera att pilmasken i `useDartDetector` blir ren.
+4. Låt `App.tsx`-warpen gå genom `computeCalibration` (N grovt utpekade punkter)
+   i stället för `cv.getPerspectiveTransform` på exakt fyra.
 5. Farfar-regelmotor, delad med `kps-dart-scorecard`
 6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas)
-7. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för steg 1 och 4
+7. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för spets- och
+   kalibreringsstegen
 
-Parallax (mätt, klart): en kamera räcker bara om spetsen detekteras i råbilden
-eller om två kameror används. Kameraplacering löser det inte.
+Klart och verifierat offline (mot `syntheticBoard`): homografilösaren,
+ellipskalibreringen, spetsdetekteringen, parallaxmätningen, rotationsankaret,
+sparad kalibrering. Parallax: en kamera räcker bara med spetsdetektering i
+råbilden eller två kameror — kameraplacering löser det inte.
 
 ## Fallgropar
 

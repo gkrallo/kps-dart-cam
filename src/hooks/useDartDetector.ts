@@ -1,6 +1,7 @@
 import { RefObject, useEffect, useRef } from 'react';
 import { Point } from '../types';
 import { BOARD_MM, BOARD_PX, PX_PER_MM } from '../utils/dartMath';
+import { detectDartAxisTip } from '../utils/dartTip';
 
 /** Ringradier i den warpade bilden, härledda ur de officiella mm-måtten. */
 const RING_PX = {
@@ -58,9 +59,15 @@ export const useDartDetector = (
     const thresh = new cv.Mat();
     const diffPrev = new cv.Mat();
     const threshPrev = new cv.Mat();
+    // Rå (owarpad) gråskala: spetsdetekteringen körs här, för i den warpade
+    // bilden är pilkroppen utsmetad eftersom den sticker ut ur tavlans plan.
+    const rawGray = new cv.Mat();
+    const rawDiff = new cv.Mat();
+    const rawThresh = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
     let baseline: any = null;
     let previous: any = null;
+    let rawBaseline: any = null;
 
     let rafId = 0;
     let stopped = false;
@@ -77,6 +84,8 @@ export const useDartDetector = (
       // Sudda i GRÅSKALA, före tröskling. Den gamla koden suddade den binära
       // bilden efteråt, vilket i praktiken bara vidgade blobben och lyfte brus.
       cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+      cv.cvtColor(frame, rawGray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(rawGray, rawGray, new cv.Size(5, 5), 0);
       frame.delete();
     };
 
@@ -84,15 +93,31 @@ export const useDartDetector = (
     grabFrame();
     baseline = gray.clone();
     previous = gray.clone();
+    rawBaseline = rawGray.clone();
+
+    // Warpar en punkt från rå videokoordinat till 800x800-rummet.
+    const warpPoint = (p: Point): Point => {
+      const src = cv.matFromArray(1, 1, cv.CV_32FC2, [p.x, p.y]);
+      const dst = new cv.Mat();
+      try {
+        cv.perspectiveTransform(src, dst, transformMatrix);
+        return { x: dst.data32F[0], y: dst.data32F[1] };
+      } finally {
+        src.delete();
+        dst.delete();
+      }
+    };
 
     const analyseNewBlob = () => {
-      cv.threshold(diff, thresh, 15, 255, cv.THRESH_BINARY);
-      cv.morphologyEx(thresh, thresh, cv.MORPH_OPEN, kernel);
-      cv.morphologyEx(thresh, thresh, cv.MORPH_CLOSE, kernel);
+      // Bildsubtraktion i RÅ bild - se rawGray ovan.
+      cv.absdiff(rawGray, rawBaseline, rawDiff);
+      cv.threshold(rawDiff, rawThresh, 15, 255, cv.THRESH_BINARY);
+      cv.morphologyEx(rawThresh, rawThresh, cv.MORPH_OPEN, kernel);
+      cv.morphologyEx(rawThresh, rawThresh, cv.MORPH_CLOSE, kernel);
 
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
-      cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
+      cv.findContours(rawThresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
       let bestIdx = -1;
       let bestArea = 0;
@@ -104,8 +129,18 @@ export const useDartDetector = (
         }
       }
 
-      if (bestIdx !== -1 && bestArea > 100 && bestArea < 15000) {
+      // Arean är relativ bildstorleken nu (rå bild, inte den fasta 800x800:an).
+      const frameArea = rawGray.rows * rawGray.cols || 1;
+      const minArea = frameArea * 0.0002;
+      const maxArea = frameArea * 0.05;
+
+      if (bestIdx !== -1 && bestArea > minArea && bestArea < maxArea) {
         const contour = contours.get(bestIdx);
+
+        const points: Point[] = [];
+        for (let i = 0; i < contour.rows; i++) {
+          points.push({ x: contour.data32S[i * 2], y: contour.data32S[i * 2 + 1] });
+        }
 
         // Formkontroll: en pil är avlång. Runda blobbar är skuggor eller brus.
         const rect = cv.minAreaRect(contour);
@@ -113,25 +148,29 @@ export const useDartDetector = (
         const short = Math.max(Math.min(rect.size.width, rect.size.height), 1);
         const elongation = long / short;
 
-        if (elongation >= 2.5) {
-          // TODO (nästa steg): detta är den enkla metoden - "punkten närmast
-          // centrum". Den plockar fel punkt så fort pilen ligger på tvären
-          // eller sitter nära bullen. Ersätts av axelanpassning (fitLine +
-          // breddtest) utförd i RÅ kamerabild, där bara den färdiga spetsen
-          // warpas genom homografin.
-          let tip: Point = { x: 0, y: 0 };
-          let minDist = Infinity;
-          const cx = BOARD_PX / 2;
-          const cy = BOARD_PX / 2;
-          for (let i = 0; i < contour.rows; i++) {
-            const px = contour.data32S[i * 2];
-            const py = contour.data32S[i * 2 + 1];
-            const d = (px - cx) ** 2 + (py - cy) ** 2;
-            if (d < minDist) {
-              minDist = d;
-              tip = { x: px, y: py };
+        let tipRaw: Point | null = null;
+        try {
+          const axis = detectDartAxisTip(points, { minElongation: 2 });
+          if (axis && axis.confidence > 0.15) {
+            // Axelanpassning + breddtest: fenan är bredare än spetsen.
+            tipRaw = axis.tip;
+          } else if (elongation >= 2.5) {
+            // Nästan frontal pil: axeln går inte att lita på. Blobbens
+            // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
+            let mx = 0;
+            let my = 0;
+            for (const p of points) {
+              mx += p.x;
+              my += p.y;
             }
+            tipRaw = { x: mx / points.length, y: my / points.length };
           }
+        } catch (err) {
+          console.error('Spetsdetektering misslyckades:', err);
+        }
+
+        if (tipRaw) {
+          const tip = warpPoint(tipRaw);
           detectedDartsRef.current.push(tip);
           onDartDetectedRef.current(tip);
         }
@@ -223,6 +262,8 @@ export const useDartDetector = (
           analyseNewBlob();
           baseline.delete();
           baseline = gray.clone();
+          rawBaseline.delete();
+          rawBaseline = rawGray.clone();
         } else {
           state = 'STABILIZING';
         }
@@ -241,9 +282,13 @@ export const useDartDetector = (
       cancelAnimationFrame(rafId);
       // Varenda Mat måste raderas, inklusive baseline och previous - de
       // saknades i den gamla cleanupen och läckte två 800x800-bilder per kast.
-      [warped, gray, diff, thresh, diffPrev, threshPrev, kernel, baseline, previous].forEach((m) => m?.delete());
+      [
+        warped, gray, diff, thresh, diffPrev, threshPrev,
+        rawGray, rawDiff, rawThresh, kernel, baseline, previous, rawBaseline,
+      ].forEach((m) => m?.delete());
       baseline = null;
       previous = null;
+      rawBaseline = null;
     };
   }, [cv, videoElement, transformMatrix, isActive, debugCanvasRef]);
 };

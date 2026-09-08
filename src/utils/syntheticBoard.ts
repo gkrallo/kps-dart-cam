@@ -314,3 +314,87 @@ export function sampleImage(img: SyntheticImage, x: number, y: number): RGB {
   const idx = (py * img.width + px) * 4;
   return [img.data[idx], img.data[idx + 1], img.data[idx + 2]];
 }
+
+const cross3 = (a: Vec3, b: Vec3): Vec3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+const norm3 = (v: Vec3): Vec3 => {
+  const n = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / n, v[1] / n, v[2] / n];
+};
+
+export interface SyntheticDart {
+  /** Ingångspunkt på tavlan (mm, Z = 0). */
+  entry: Point;
+  /** Enhetsriktning i board-systemet, från ingångspunkten och ut längs pilen. */
+  direction: Vec3;
+  /** Längder i mm längs pilen. */
+  tipLen?: number;
+  barrelLen?: number;
+  shaftLen?: number;
+  flightLen?: number;
+  /** Pipans radie (mm). */
+  barrelRadius?: number;
+  /** Fenans halva bredd (mm) - fenan är den breda änden. */
+  flightHalfWidth?: number;
+}
+
+/**
+ * Projicerar en pil till de bildpunkter den täcker. Pilen modelleras som en
+ * roterad kropp med varierande radie: tunn spets, pipa, tunt skaft, bred fena.
+ * Det är förenklat men fångar det breddtestet behöver: den ena änden smal,
+ * den andra bred.
+ */
+export function projectDartSilhouette(
+  cam: SyntheticCamera,
+  dart: SyntheticDart,
+  ringsAround = 10,
+): Point[] {
+  const tipLen = dart.tipLen ?? 25;
+  const barrelLen = dart.barrelLen ?? 45;
+  const shaftLen = dart.shaftLen ?? 30;
+  const flightLen = dart.flightLen ?? 35;
+  const total = tipLen + barrelLen + shaftLen + flightLen;
+  const barrelR = dart.barrelRadius ?? 3.2;
+  const flightW = dart.flightHalfWidth ?? 17;
+
+  const d = norm3(dart.direction);
+  const helper: Vec3 = Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0];
+  const e1 = norm3(cross3(d, helper));
+  const e2 = norm3(cross3(d, e1));
+
+  const radiusAt = (dist: number): number => {
+    if (dist < tipLen) return 0.2 + (dist / tipLen) * barrelR * 0.7;
+    if (dist < tipLen + barrelLen) return barrelR;
+    if (dist < tipLen + barrelLen + shaftLen) return barrelR * 0.45;
+    return flightW;
+  };
+
+  const pts: Point[] = [];
+  const along = Math.max(24, Math.round(total / 2));
+  for (let i = 0; i <= along; i++) {
+    const dist = (i / along) * total;
+    const r = radiusAt(dist);
+    const base: Vec3 = [
+      dart.entry.x + d[0] * dist,
+      dart.entry.y + d[1] * dist,
+      d[2] * dist,
+    ];
+    const angSteps = r < 1 ? 1 : ringsAround;
+    for (let a = 0; a < angSteps; a++) {
+      const ang = (a / angSteps) * 2 * Math.PI;
+      const o1 = Math.cos(ang) * r;
+      const o2 = Math.sin(ang) * r;
+      pts.push(
+        cam.project3D(
+          base[0] + e1[0] * o1 + e2[0] * o2,
+          base[1] + e1[1] * o1 + e2[1] * o2,
+          base[2] + e1[2] * o1 + e2[2] * o2,
+        ),
+      );
+    }
+  }
+  return pts;
+}

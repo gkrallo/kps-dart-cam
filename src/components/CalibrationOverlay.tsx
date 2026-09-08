@@ -6,8 +6,14 @@ import {
   getSectorBoundaryAngles,
 } from '../utils/boardProjection';
 import { autoDetectBoardEllipse, autoDetectBoardOpenCV } from '../utils/boardDetector';
+import {
+  fromStored,
+  loadCalibration,
+  rotateCalibrationToAnchor,
+  saveCalibration,
+} from '../utils/calibration';
 import type { ZoomCapability } from './CameraFeed';
-import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw } from 'lucide-react';
+import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair } from 'lucide-react';
 
 interface CalibrationOverlayProps {
   containerWidth: number;
@@ -38,30 +44,63 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
   const [detectStatus, setDetectStatus] = useState<string | null>(null);
   const [showDpad, setShowDpad] = useState<boolean>(false);
+  const [anchorMode, setAnchorMode] = useState<boolean>(false);
 
-  // Initialize points only once when dimensions are available
+  // Initialize points only once when dimensions are available. Om en kalibrering
+  // finns sparad sedan tidigare återställs den - annars en centrerad ring.
   useEffect(() => {
     if (points.length === 0 && containerWidth > 0 && containerHeight > 0) {
+      const container = { width: containerWidth, height: containerHeight };
+      const restored = (() => {
+        const stored = loadCalibration();
+        return stored ? fromStored(stored, container) : null;
+      })();
+
       const cx = containerWidth / 2;
       const cy = containerHeight / 2;
-      // Realistic dartboard double-ring radius in typical camera frame (~22% of container)
       const r = Math.min(containerWidth, containerHeight) * 0.22;
-      const initialPoints = [
-        { x: cx, y: cy - r }, // Top (12 o'clock)
-        { x: cx + r, y: cy }, // Right (3 o'clock)
-        { x: cx, y: cy + r }, // Bottom (6 o'clock)
-        { x: cx - r, y: cy }, // Left (9 o'clock)
-      ];
+      const initialPoints =
+        restored ?? [
+          { x: cx, y: cy - r }, // Top (12 o'clock)
+          { x: cx + r, y: cy }, // Right (3 o'clock)
+          { x: cx, y: cy + r }, // Bottom (6 o'clock)
+          { x: cx - r, y: cy }, // Left (9 o'clock)
+        ];
       setPoints(initialPoints);
       onPointsChange(initialPoints);
+      if (restored) {
+        setDetectStatus('Sparad kalibrering återställd. Justera vid behov.');
+        window.setTimeout(() => setDetectStatus(null), 5000);
+      }
     }
   }, [containerWidth, containerHeight]);
 
   const handlePointerDown = (idx: number, e: React.PointerEvent) => {
+    if (anchorMode) return; // i utpekningsläge ska trycket rotera, inte dra
     e.preventDefault();
     setActiveIdx(idx);
     setDraggingIdx(idx);
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+
+  // I utpekningsläge: ett tryck var som helst säger var 20:an sitter.
+  const handleSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!anchorMode || points.length !== 4) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const tap = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const rotated = rotateCalibrationToAnchor(points, tap);
+    setPoints(rotated);
+    onPointsChange(rotated);
+    setAnchorMode(false);
+    setDetectStatus('20:an placerad.');
+    window.setTimeout(() => setDetectStatus(null), 2500);
+  };
+
+  const handleSaveCalibration = () => {
+    if (points.length === 4 && containerWidth > 0 && containerHeight > 0) {
+      saveCalibration(points, { width: containerWidth, height: containerHeight });
+    }
+    onSaveCalibration?.();
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -219,7 +258,10 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
       {/* SVG Layer for Points and Wireframe Overlay */}
       <svg
-        className="absolute inset-0 w-full h-full touch-none pointer-events-auto"
+        className={`absolute inset-0 w-full h-full touch-none pointer-events-auto ${
+          anchorMode ? 'cursor-crosshair' : ''
+        }`}
+        onPointerDown={handleSvgPointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
@@ -350,6 +392,19 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             <Sparkles className="w-4 h-4" />
             <span className="hidden sm:inline">Auto-Kalibrera Tavla</span>
             <span className="sm:hidden">Auto-Kalibrera</span>
+          </button>
+
+          <button
+            onClick={() => setAnchorMode((v) => !v)}
+            className={`active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border shadow-lg backdrop-blur-md transition-all ${
+              anchorMode
+                ? 'bg-blue-600 text-white border-blue-400'
+                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+            }`}
+            title="Tryck där 20:an sitter så vrids kalibreringen rätt"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{anchorMode ? 'Tryck på 20:an…' : 'Peka ut 20:an'}</span>
           </button>
 
           <button
@@ -491,7 +546,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
         {/* Right Side: Primary Save Button */}
         <button
-          onClick={onSaveCalibration}
+          onClick={handleSaveCalibration}
           className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/30 flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0"
         >
           <CheckCircle2 className="w-4 h-4 text-white" />
