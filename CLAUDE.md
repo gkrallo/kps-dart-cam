@@ -14,9 +14,10 @@ träffar och räknar poängen automatiskt.
 Ägare: Kristian (gkrallo). Appen är till för hemmabruk när han och vänner
 spelar dart. Förebilden är DartsMind, som gör samma sak och fungerar bra.
 
-**Slutmålet är husspelet "Farfar"**, inte 501. 501 finns bara som första
-spelläge för att kunna testa datorseendet. Farfar-motorn ska på sikt delas med
-Kristians andra repo `kps-dart-scorecard`, som redan implementerar reglerna.
+**Slutmålet är husspelet "Farfar"**, men 301, 501 och Farfar finns alla som
+spellägen. Regelmotorn (`src/game/`) är **portad från `kps-dart-scorecard`** och
+bör hållas i synk med den - samma event-sourcade modell (en match sparar bara en
+kastlista, ställningen räknas alltid fram, allt går att rätta i efterhand).
 
 ### Farfar-reglerna, enligt Kristian
 
@@ -89,12 +90,21 @@ src/
   components/
     CameraFeed.tsx            getUserMedia, videoelement, hårdvaruzoom
     CalibrationOverlay.tsx    SVG-överlägg med 4 dragbara punkter + wireframe
-    Scoreboard.tsx            501-panel, detektorstatus, Vision-miniatyr
+    GameSetup.tsx             Välj spelläge (301/501/Farfar) + spelare
+    Scoreboard.tsx            Spelpanel (aktiv spelare, poäng, tur), detektorstatus
+    ThrowEditor.tsx           Knappsats för att rätta en avläst pil
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
-    useDartDetector.ts        rAF-loop: warp, bildsubtraktion, konturanalys
-    useDartGame.ts            501-regelmotor (bust, double-out, undo)
+    useDartDetector.ts        rAF-loop: warp, bildsubtraktion, konturanalys, tavla-tömd
+    useMatch.ts               React-omslag för spelmotorn (localStorage-persistens)
+
+  game/                       Regelmotor, portad från kps-dart-scorecard
+    types.ts                  Seg, MatchState, Match, MatchAction, Engine
+    segments.ts               poäng, etikett, utgångsförslag
+    x01.ts / farfar.ts        301/501 respektive Farfar
+    match.ts                  event-sourcad match: throw/end/undo/remove/replace
+    index.ts                  segFromDartScore (bryggan från datorseendet)
 
   utils/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
@@ -124,7 +134,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 156 tester
+npm test         # 186 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -154,9 +164,16 @@ offline mot en känd sanning — se `homography.test.ts`, `boardEllipse.test.ts`
 `realBoard.test.ts` går ett steg längre: `__tests__/fixtures/outdoor-board.jpg`
 är ett riktigt foto av Kristians slitna utomhustavla (kväll, en strålkastare,
 snett sedd). Testet kör inte OpenCV men matar den rena geometrikedjan med
-faktiska röd/grön-maskpixlar ur fotot — verklig optik, verklig tavla. Kvar att
-verifiera på riktig hårdvara: OpenCV-delen (färgmask → kontur → ellips) och att
-pilmasken blir ren i verklig belysning.
+faktiska röd/grön-maskpixlar ur fotot — verklig optik, verklig tavla.
+
+`game/__tests__/engine.test.ts` är regelmotorn (portad från scorecardens
+`tools/test-engine.js`). `components/__tests__/gameViews.test.tsx` är ett
+rök-test som renderar spelvyerna med `renderToStaticMarkup` (ingen DOM, men
+fångar kraschar i renderträdet).
+
+Kvar att verifiera på riktig hårdvara: OpenCV-delen (färgmask → kontur → ellips),
+att pilmasken blir ren i verklig belysning, och hela spelflödet med detektering
+(pil-ljud, uppläsning, automatiskt spelarbyte).
 
 ---
 
@@ -240,10 +257,19 @@ fallgropen nedan:
 ```
 rå gråskala → absdiff mot rå baseline → tröskel → morfologi → största konturen
    → detectDartAxisTip (PCA-axel + breddtest)  |  fallback: tyngdpunkt
-   → perspectiveTransform(spets)  →  getScoreFromPixel  →  useDartGame
+   → perspectiveTransform(spets)  →  getScoreFromPixel  →  segFromDartScore
+   →  useMatch.throwSeg  (+ pil-ljud, uppläst poäng)
 ```
 
 Därefter sätts nya baselines (warpad + rå) så nästa pil syns som en ny skillnad.
+
+**Tavla-tömd → spelarbyte.** En tredje referensbild (`emptyBaseline`, den tomma
+tavlan vid speluppstart) används bara till detta: när en stabil bildruta är
+nästan identisk med den tomma tavlan igen, och minst en pil hunnit registreras,
+har någon dragit ur pilarna. För 301/501 avslutas turen (`endTurn`), en ton
+spelas och nästa spelares namn läses upp. Farfar avslutar turen själv i motorn.
+`absdiff` kan inte skilja "något dök upp" från "något försvann", men "är tavlan
+tom igen?" är en enklare fråga som den klarar.
 
 ### Trösklar och parametrar — var ärlig om vad de är värda
 
@@ -271,7 +297,7 @@ inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 | Ellipsval | fyrkantighet ≥ 0.55, centrum inom 0.42 × min(bild) | `boardDetector` | **Satt av oss.** Fotot visade att rödbrunt trädäck matchar "röd" bättre än den slitna ringen — "största konturen" låste på däcket. En ring är rund och nära bildmitten; däck och pilfenor är avlånga fläckar i kanten. |
 
 Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin och spetsdetekteringen — 156 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 186 tester, delvis mot den syntetiska
 tavlan.
 
 ---
@@ -370,10 +396,11 @@ det här GitHub-repot. Det förklarar flera saker i koden:
 - **Ärvda magiska tal.** Se tabellen ovan. Många trösklar har ingen känd
   härledning; de var i koden från början.
 - **Död kod var normen.** Flera välskrivna funktioner var aldrig inkopplade —
-  `audioEngine` (90 rader ljud och TTS som aldrig spelades),
   `computeInverseHomography`, `getScoreFromCanonicalCoordinates`. Ironiskt nog
-  var den bortkopplade koden ofta den bättre versionen. Om du hittar mer
-  oanvänd kod: koppla in den eller radera den, låt den inte ligga.
+  var den bortkopplade koden ofta den bättre versionen. `audioEngine` (ljud +
+  svensk TTS) är numera helt inkopplad: pil-ljud + uppläst poäng vid detektering,
+  fanfar vid vinst, "Nästa spelare"-ton + uppläst namn vid spelarbyte. Om du
+  hittar mer oanvänd kod: koppla in den eller radera den, låt den inte ligga.
 - **En backend som inte gick att köra.** POC:en hade en Express-server med en
   Gemini-proxy. `dotenv` importerades aldrig, så `.env` lästes inte; `PORT` var
   hårdkodad; `NODE_ENV` sattes aldrig. Allt är borttaget.

@@ -5,21 +5,24 @@ import { useOpenCV } from './hooks/useOpenCV';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { Point } from './types';
 import { useDartDetector } from './hooks/useDartDetector';
-import { useDartGame } from './hooks/useDartGame';
-import { BOARD_PX, getScoreFromPixel } from './utils/dartMath';
+import { useMatch } from './hooks/useMatch';
+import { getScoreFromPixel } from './utils/dartMath';
 import { audioEngine } from './utils/audioEngine';
+import { GameSetup } from './components/GameSetup';
+import { segFromDartScore } from './game';
+import { engineFor, matchState } from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
 
 export default function App() {
   const { isLoaded, isLoading, error, cv } = useOpenCV();
-  
+
   const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [detectorState, setDetectorState] = useState<string>('INACTIVE');
-  const [noiseLevel, setNoiseLevel] = useState<number>(0);
+  const [, setNoiseLevel] = useState<number>(0);
   const [motionThreshold, setMotionThreshold] = useState<number>(3000);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [zoomCapability, setZoomCapability] = useState<ZoomCapability>({
@@ -27,18 +30,10 @@ export default function App() {
   });
   const [lastScoredDartLabel, setLastScoredDartLabel] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'live' | 'vision'>('live');
+  const [showSetup, setShowSetup] = useState(false);
 
-  // 501 Game Motor Hook
-  const {
-    currentScore,
-    currentTurnDarts,
-    isBust,
-    isWon,
-    registerDart,
-    undoLastDart,
-    resetGame,
-  } = useDartGame(501);
-  
+  const { match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow } = useMatch();
+
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
   // render och fungerade bara för att setIsCalibrated råkade trigga en
@@ -46,6 +41,11 @@ export default function App() {
   const [transformMatrix, setTransformMatrix] = useState<any>(null);
 
   useEffect(() => () => transformMatrix?.delete(), [transformMatrix]);
+
+  // När kalibreringen är klar men inget spel pågår: visa uppstartsskärmen.
+  useEffect(() => {
+    if (isCalibrated && !match) setShowSetup(true);
+  }, [isCalibrated, match]);
 
   const handleVideoReady = useCallback((video: HTMLVideoElement) => {
     console.log('Video är redo:', video.videoWidth, 'x', video.videoHeight);
@@ -62,28 +62,60 @@ export default function App() {
 
   const handleDartDetected = useCallback((pt: Point) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
-    registerDart(scoreObj);
+    throwSeg(segFromDartScore(scoreObj));
 
     audioEngine.playDartHitSound();
     audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
 
     setLastScoredDartLabel(scoreObj.label);
     window.setTimeout(() => setLastScoredDartLabel(null), 2500);
-  }, [registerDart]);
+  }, [throwSeg]);
 
-  const handleDebugState = useCallback((state: string, noise: number) => {
-    setDetectorState(state);
+  const handleBoardCleared = useCallback(() => {
+    if (!match) return;
+    const st = matchState(match);
+    const engine = engineFor(match.config);
+    // 301/501: turen avslutas när tavlan töms. Farfar avslutar turen själv i
+    // motorn, så där räcker det att detektorn nollställts.
+    if (engine.hasEndTurn && !st.finished && st.currentDarts.length > 0) {
+      finishTurn();
+      audioEngine.playSwitchSound();
+      const next = st.players[(st.currentIndex + 1) % st.players.length];
+      if (next) audioEngine.speak(`${next.name}s tur`);
+    }
+  }, [match, finishTurn]);
+
+  const handleDebugState = useCallback((s: string, noise: number) => {
+    setDetectorState(s);
     setNoiseLevel(noise);
   }, []);
 
-  // Use our detection hook
-  useDartDetector(cv, videoElement, transformMatrix, isCalibrated, motionThreshold, debugCanvasRef, handleDartDetected, handleDebugState);
+  useDartDetector(
+    cv,
+    videoElement,
+    transformMatrix,
+    isCalibrated,
+    motionThreshold,
+    debugCanvasRef,
+    handleDartDetected,
+    handleDebugState,
+    handleBoardCleared,
+  );
+
+  // Vinst: annonsera och slutför turen så matchen registreras klar.
+  useEffect(() => {
+    if (state?.view.win && !state.finished) finishTurn();
+    if (state?.finished && state.winners.length) {
+      audioEngine.playWinSound();
+      audioEngine.speak(`${state.winners.join(' och ')} vinner!`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.view.win, state?.finished]);
 
   const handleCalibrationClick = () => {
     if (isCalibrated) {
       setTransformMatrix(null); // effekten nedan raderar den gamla matrisen
       setIsCalibrated(false);
-      resetGame();
       return;
     }
 
@@ -100,8 +132,6 @@ export default function App() {
     let dstMat: any = null;
     try {
       // Videon visas med object-cover: skalad med max() och centrerad.
-      // Ingen zoom-term här - zoomen sker i hårdvaran, så videoframen är
-      // redan zoomad och container-koordinater mappar rakt av.
       const vw = videoElement.videoWidth;
       const vh = videoElement.videoHeight;
       const cw = containerSize.width || window.innerWidth;
@@ -120,10 +150,7 @@ export default function App() {
       // Målet: en 800x800-bild där radien 400 px motsvarar dubbelringens
       // ytterkant (170 mm). Se BOARD_PX/MM_PER_PX i dartMath.ts.
       dstMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        BOARD_PX / 2, 0,
-        BOARD_PX, BOARD_PX / 2,
-        BOARD_PX / 2, BOARD_PX,
-        0, BOARD_PX / 2,
+        400, 0, 800, 400, 400, 800, 0, 400,
       ]);
 
       setTransformMatrix(cv.getPerspectiveTransform(srcMat, dstMat));
@@ -136,6 +163,8 @@ export default function App() {
     }
   };
 
+  const hasEndTurn = match ? engineFor(match.config).hasEndTurn : true;
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
       {/* Header */}
@@ -144,16 +173,13 @@ export default function App() {
           KPs DartApp
         </h1>
 
-        {/* View Mode Switcher (Live vs Vision 2D View) */}
         {isCalibrated && (
           <div className="pointer-events-auto bg-slate-950/90 border border-slate-800 p-1 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-1 shrink-0">
             <button
               onClick={() => setViewMode('live')}
               aria-label="Live-kamera"
               className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                viewMode === 'live'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-white'
+                viewMode === 'live' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'text-slate-400 hover:text-white'
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
@@ -163,9 +189,7 @@ export default function App() {
               onClick={() => setViewMode('vision')}
               aria-label="Vision 2D-vy"
               className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                viewMode === 'vision'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
-                  : 'text-slate-400 hover:text-white'
+                viewMode === 'vision' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30' : 'text-slate-400 hover:text-white'
               }`}
             >
               <Eye className="w-3.5 h-3.5 text-emerald-300" />
@@ -175,17 +199,16 @@ export default function App() {
         )}
 
         <div className="flex items-center gap-2 shrink-0">
-           {isLoaded ? (
-              <span className="flex h-3 w-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" title="OpenCV Datorseende Aktivt"></span>
-           ) : (
-              <span className="flex h-3 w-3 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]" title="Laddar OpenCV..."></span>
-           )}
+          {isLoaded ? (
+            <span className="flex h-3 w-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" title="OpenCV Datorseende Aktivt" />
+          ) : (
+            <span className="flex h-3 w-3 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]" title="Laddar OpenCV..." />
+          )}
         </div>
       </header>
 
       {/* Main Viewport Container */}
       <main className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
-        {/* Camera Feed (Always active in background for continuous OpenCV frame processing) */}
         <div className={`w-full h-full ${viewMode === 'vision' ? 'opacity-0 pointer-events-none absolute inset-0' : 'relative'}`}>
           <CameraFeed
             onVideoReady={handleVideoReady}
@@ -194,9 +217,9 @@ export default function App() {
             zoomLevel={zoomLevel}
           >
             {isLoaded && !isCalibrated && (
-              <CalibrationOverlay 
-                containerWidth={containerSize.width || window.innerWidth} 
-                containerHeight={containerSize.height || window.innerHeight} 
+              <CalibrationOverlay
+                containerWidth={containerSize.width || window.innerWidth}
+                containerHeight={containerSize.height || window.innerHeight}
                 onPointsChange={handlePointsChange}
                 onSaveCalibration={handleCalibrationClick}
                 cv={cv}
@@ -209,42 +232,41 @@ export default function App() {
           </CameraFeed>
         </div>
 
-        {/* Vision View (Perspektivkorrigerad 2D-Vy) */}
+        {/* Vision View */}
         {viewMode === 'vision' && (
           <div className="relative w-full h-full flex flex-col items-center justify-center p-4 bg-slate-950">
-            {/* Top Vision Banner HUD */}
             <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] bg-slate-900/90 border border-emerald-500/40 px-4 py-2 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3">
               <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0" />
               <div className="flex flex-col min-w-0">
-                <span className="text-emerald-400 font-bold text-xs uppercase tracking-wider">
-                  Vision-läge (2D-vy)
-                </span>
-                <span className="text-slate-400 text-[10px] truncate">
-                  Var datorseendet tror att pilarna träffat.
-                </span>
+                <span className="text-emerald-400 font-bold text-xs uppercase tracking-wider">Vision-läge (2D-vy)</span>
+                <span className="text-slate-400 text-[10px] truncate">Var datorseendet tror att pilarna träffat.</span>
               </div>
             </div>
-
-            {/* 2D Warped Board Canvas Container */}
             <div className="relative aspect-square max-w-[85vh] max-h-[85vh] w-full bg-black rounded-3xl overflow-hidden border-2 border-emerald-500/40 shadow-[0_0_50px_rgba(16,185,129,0.2)] flex items-center justify-center">
-              <canvas
-                ref={debugCanvasRef}
-                width={800}
-                height={800}
-                className="w-full h-full object-contain"
-              />
+              <canvas ref={debugCanvasRef} width={800} height={800} className="w-full h-full object-contain" />
             </div>
           </div>
         )}
 
-        {/* Dart Hit Toast Indicator */}
+        {/* Dart Hit Toast */}
         {lastScoredDartLabel && (
           <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 animate-bounce bg-blue-600/90 text-white font-black text-2xl sm:text-3xl px-6 py-2 rounded-2xl border-2 border-blue-400 shadow-2xl backdrop-blur-md whitespace-nowrap">
             + {lastScoredDartLabel}
           </div>
         )}
-        
-        {/* Loading Overlay */}
+
+        {/* Game Setup */}
+        {isCalibrated && showSetup && (
+          <GameSetup
+            onStart={(opts) => {
+              start(opts);
+              setShowSetup(false);
+              audioEngine.unlock();
+            }}
+            onSkip={match ? () => setShowSetup(false) : undefined}
+          />
+        )}
+
         {isLoading && (
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-20">
             <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
@@ -252,7 +274,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Error Overlay */}
         {error && (
           <div className="absolute inset-0 bg-red-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-20 p-6 text-center">
             <div className="bg-red-900/50 p-4 rounded-xl border border-red-500/30">
@@ -263,25 +284,26 @@ export default function App() {
         )}
       </main>
 
-      {/* 501 Scoreboard & Game Controls */}
       <Scoreboard
-        currentScore={currentScore}
-        currentTurnDarts={currentTurnDarts}
-        isBust={isBust}
-        isWon={isWon}
-        onUndo={undoLastDart}
-        onReset={() => resetGame(501)}
+        match={state}
+        hasEndTurn={hasEndTurn}
+        onUndo={undoLast}
+        onFinishTurn={finishTurn}
+        onEditThrow={editThrow}
+        onDeleteThrow={deleteThrow}
+        onNewGame={() => {
+          quit();
+          setShowSetup(true);
+        }}
         isCalibrated={isCalibrated}
         onCalibrateClick={handleCalibrationClick}
         detectorState={detectorState}
-        noiseLevel={noiseLevel}
         motionThreshold={motionThreshold}
         onThresholdChange={setMotionThreshold}
         debugCanvasRef={debugCanvasRef}
         viewMode={viewMode}
-        onToggleViewMode={() => setViewMode(prev => prev === 'live' ? 'vision' : 'live')}
+        onToggleViewMode={() => setViewMode((p) => (p === 'live' ? 'vision' : 'live'))}
       />
     </div>
   );
 }
-

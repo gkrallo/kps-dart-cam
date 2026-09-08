@@ -22,16 +22,20 @@ export const useDartDetector = (
   debugCanvasRef: RefObject<HTMLCanvasElement | null>,
   onDartDetected: (tip: Point) => void,
   onDebugState?: (state: string, noise: number) => void,
+  /** Anropas när tavlan blivit tömd på pilar igen (efter minst en detekterad pil). */
+  onBoardCleared?: () => void,
 ) => {
   // Callbacks i refs: annars byggs hela effekten om vid varje kast, eftersom
   // onDartDetected får ny identitet när poängen ändras. Det allokerade om alla
   // Mat:er, läste om baseline och avbröt rAF-loopen mitt i spelet.
   const onDartDetectedRef = useRef(onDartDetected);
   const onDebugStateRef = useRef(onDebugState);
+  const onBoardClearedRef = useRef(onBoardCleared);
   const motionThresholdRef = useRef(motionThreshold);
   useEffect(() => {
     onDartDetectedRef.current = onDartDetected;
     onDebugStateRef.current = onDebugState;
+    onBoardClearedRef.current = onBoardCleared;
     motionThresholdRef.current = motionThreshold;
   });
 
@@ -64,10 +68,16 @@ export const useDartDetector = (
     const rawGray = new cv.Mat();
     const rawDiff = new cv.Mat();
     const rawThresh = new cv.Mat();
+    const emptyDiff = new cv.Mat();
+    const emptyThresh = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
     let baseline: any = null;
     let previous: any = null;
     let rawBaseline: any = null;
+    // Referensbild av den TOMMA tavlan (vid speluppstart). Används bara för att
+    // avgöra när tavlan blivit tömd på pilar igen -> automatiskt spelarbyte.
+    let emptyBaseline: any = null;
+    let dartsSinceClear = 0;
 
     let rafId = 0;
     let stopped = false;
@@ -93,6 +103,7 @@ export const useDartDetector = (
     grabFrame();
     baseline = gray.clone();
     previous = gray.clone();
+    emptyBaseline = gray.clone();
     rawBaseline = rawGray.clone();
 
     // Warpar en punkt från rå videokoordinat till 800x800-rummet.
@@ -172,6 +183,7 @@ export const useDartDetector = (
         if (tipRaw) {
           const tip = warpPoint(tipRaw);
           detectedDartsRef.current.push(tip);
+          dartsSinceClear++;
           onDartDetectedRef.current(tip);
         }
       }
@@ -269,6 +281,25 @@ export const useDartDetector = (
         }
       } else {
         isStabilizing = false;
+
+        // Tavlan tömd? Jämför mot den tomma referensbilden. Är den nästan
+        // identisk igen, och vi hunnit registrera minst en pil, så har någon
+        // dragit ur pilarna -> spelarbyte. Baseline nollställs så nästa pil
+        // syns som en ny skillnad.
+        if (dartsSinceClear > 0 && emptyBaseline) {
+          cv.absdiff(gray, emptyBaseline, emptyDiff);
+          cv.threshold(emptyDiff, emptyThresh, 30, 255, cv.THRESH_BINARY);
+          if (cv.countNonZero(emptyThresh) < 400) {
+            dartsSinceClear = 0;
+            detectedDartsRef.current = [];
+            baseline.delete();
+            baseline = gray.clone();
+            rawBaseline.delete();
+            rawBaseline = rawGray.clone();
+            state = 'CLEARED';
+            onBoardClearedRef.current?.();
+          }
+        }
       }
 
       onDebugStateRef.current?.(state, movementNoise);
@@ -284,10 +315,12 @@ export const useDartDetector = (
       // saknades i den gamla cleanupen och läckte två 800x800-bilder per kast.
       [
         warped, gray, diff, thresh, diffPrev, threshPrev,
-        rawGray, rawDiff, rawThresh, kernel, baseline, previous, rawBaseline,
+        rawGray, rawDiff, rawThresh, emptyDiff, emptyThresh,
+        kernel, baseline, previous, rawBaseline, emptyBaseline,
       ].forEach((m) => m?.delete());
       baseline = null;
       previous = null;
+      emptyBaseline = null;
       rawBaseline = null;
     };
   }, [cv, videoElement, transformMatrix, isActive, debugCanvasRef]);

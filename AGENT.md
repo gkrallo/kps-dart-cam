@@ -22,11 +22,15 @@ src/
   components/
     CameraFeed.tsx             Kameraström + hårdvaruzoom
     CalibrationOverlay.tsx     SVG-överlägg med de 4 dragbara punkterna
-    Scoreboard.tsx             501-panel, detektorstatus, Vision-miniatyr
+    GameSetup.tsx              Val av spelläge + spelare
+    Scoreboard.tsx             Spelpanel, detektorstatus, Vision-miniatyr
+    ThrowEditor.tsx            Rätta en avläst pil
   hooks/
     useOpenCV.ts               Laddar opencv.js (modulnivå-promise)
-    useDartDetector.ts         rAF-loop: warp, bildsubtraktion, konturanalys
-    useDartGame.ts             501-regelmotor
+    useDartDetector.ts         rAF-loop: warp, bildsubtraktion, konturanalys, tavla-tömd
+    useMatch.ts                React-omslag för spelmotorn (localStorage)
+  game/                        Regelmotor portad från kps-dart-scorecard
+    segments.ts x01.ts farfar.ts match.ts types.ts index.ts
   utils/
     dartMath.ts                ★ Mått, koordinatsystem, poängberäkning
     homography.ts              DLT + Levenberg-Marquardt (N punkter, reprojektionsresidual)
@@ -53,8 +57,9 @@ tavlans mått.
 
 ```
 kamera → warpPerspective(H) → gråskala → absdiff mot baseline
-   → tröskel → morfologi → största konturen → spetspunkt
-   → pixelToCanonical → getScoreFromCanonicalCoordinates → useDartGame
+   → tröskel → morfologi → största konturen (i RÅ bild) → spetspunkt (dartTip.ts)
+   → warpPoint → getScoreFromPixel → segFromDartScore → useMatch.throwSeg
+   + tavla-tömd-detektering → endTurn / spelarbyte + ljud/TTS
 ```
 
 ## Kända begränsningar
@@ -114,22 +119,24 @@ ny mask mot föregående och isolera det tillkomna området.
 
 ## Att göra
 
-1. Tap-to-correct: rätta en feltolkad pil genom att trycka i Vision View. Ger
-   också märkt data för framtida ML.
-2. Hantera uttagning av pilar (riktad subtraktion eller "tavla rensad"-läge)
-3. Trimma `autoDetectBoardEllipse`-färgtrösklarna mot en riktig tavla i verklig
-   belysning, och verifiera att pilmasken i `useDartDetector` blir ren.
-4. Låt `App.tsx`-warpen gå genom `computeCalibration` (N grovt utpekade punkter)
-   i stället för `cv.getPerspectiveTransform` på exakt fyra.
-5. Farfar-regelmotor, delad med `kps-dart-scorecard`
-6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas)
-7. Lokal ML (DeepDarts-liknande keypoint-modell) som ersättning för spets- och
-   kalibreringsstegen
+1. **Verifiera hela flödet på riktig tavla:** OpenCV-autodetekteringen,
+   pilmasken i verklig belysning, och spelflödet (pil-ljud, uppläsning,
+   automatiskt spelarbyte när tavlan töms). Trimma färgtrösklarna för Kristians
+   strålkastare.
+2. Tap-to-correct direkt i Vision View (nu finns bara `ThrowEditor` via
+   pilrutorna i panelen). Ger även märkt data för framtida ML.
+3. Rätta kast **flera turer bakåt** (motorn stödjer det, `removeThrow` /
+   `replaceThrow`; UI:t rättar bara aktuell tur).
+4. Hantering av felaktig tavla-tömd-detektering (hand kvar i bild, dålig ljus).
+5. Låt warpen i `App.tsx` gå genom `computeCalibration` (N grovt utpekade
+   punkter) i stället för `cv.getPerspectiveTransform` på exakt fyra.
+6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas).
+7. Lokal ML (DeepDarts-liknande keypoint-modell).
 
-Klart och verifierat offline (mot `syntheticBoard`): homografilösaren,
-ellipskalibreringen, spetsdetekteringen, parallaxmätningen, rotationsankaret,
-sparad kalibrering. Parallax: en kamera räcker bara med spetsdetektering i
-råbilden eller två kameror — kameraplacering löser det inte.
+Klart och verifierat offline: homografilösaren, ellipskalibreringen,
+spetsdetekteringen, parallaxmätningen, rotationsankaret, sparad kalibrering,
+**regelmotorn (301/501/Farfar) + rättning**. Parallax: en kamera räcker bara med
+spetsdetektering i råbilden eller två kameror.
 
 ## Fallgropar
 
