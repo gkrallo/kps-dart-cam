@@ -98,8 +98,10 @@ src/
 
   utils/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
-    boardProjection.ts        Homografi fram/bak, SVG-projektion av ringar
+    homography.ts             DLT + Levenberg-Marquardt-lösare (N punkter, residual)
+    boardProjection.ts        Homografi fram/bak, SVG-projektion, computeCalibration
     boardDetector.ts          Automatisk tavledetektering (HoughCircles)
+    syntheticBoard.ts         Renderar en exakt tavla genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
     __tests__/                Vitest
 
@@ -138,8 +140,13 @@ Pages-versionen är oftast enklast.
 ### Testa utan darttavla
 
 Poänggeometrin är helt testbar utan kamera — det är ren matematik. Kör `npm test`.
-Datorseendet kan i praktiken bara verifieras med en riktig tavla och riktiga
-pilar; det finns ingen fixture med testbilder i repot ännu (se öppna frågor).
+
+`syntheticBoard.ts` renderar dessutom en geometriskt exakt tavla (samma `BOARD_MM`)
+genom en känd pinhole-kamera, med valfri linsdistorsion och seedat brus. Det gör
+**kalibrering, ellipsanpassning och hela poängkedjan** testbara offline mot en känd
+sanning — se `homography.test.ts`, `syntheticBoard.test.ts` och kalibreringsfallen
+i `pipeline.test.ts`. Kvar att verifiera mot en riktig tavla: verkliga pilblobbar,
+verklig linsoptik, och pilens parallax (den sticker ut ur tavlans plan).
 
 ---
 
@@ -306,10 +313,12 @@ detektorn rivas och byggas om mitt i spelet.
 Den förstnämnda är den riktiga funktionen; den andra är bara ett omslag. Skriv
 nya anrop mot mm-varianten där det går.
 
-**`computeHomography` / `computeInverseHomography` löser 8×8 för hand.** De
-duplicerar Gauss-elimination istället för att använda OpenCV. Skälet: de körs i
-React-render för att rita kalibrerings-wireframet, där OpenCV inte behöver vara
-laddat, och de används i tester som körs i Node utan WASM.
+**Homografin löses i ren JS, inte via OpenCV.** `homography.ts` gör DLT +
+Levenberg-Marquardt för hand (Jacobi-egenvärden, egen linjär lösare). Skälet:
+`computeHomography` körs i React-render för att rita kalibrerings-wireframet, där
+OpenCV inte behöver vara laddat, och allt används i tester som körs i Node utan
+WASM. `App.tsx` använder däremot `cv.getPerspectiveTransform` för själva warpen —
+det är den enda platsen homografin går genom OpenCV.
 
 **Vision View och miniatyren delar samma canvas-ref.** Bara en av dem är
 monterad åt gången (`viewMode`), så det fungerar — men det är skört. Om båda

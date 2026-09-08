@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computeHomography, computeInverseHomography } from '../boardProjection';
+import { computeCalibration, computeHomography, computeInverseHomography } from '../boardProjection';
 import { BOARD_MM, getScoreFromCanonicalCoordinates } from '../dartMath';
 import { validateDartboardPoints } from '../boardDetector';
+import { mulberry32, syntheticCamera } from '../syntheticBoard';
 import type { Point } from '../../types';
 
 /**
@@ -122,5 +123,55 @@ describe('hela kedjan: träffpunkt i bilden -> rätt poäng', () => {
         expect(scoreAt(r, deg).startsWith('D'), `${r} mm, ${deg} grader`).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * Kalibreringens verkliga fråga: användaren pekar grovt, inte på mm. Åtta
+ * ungefärliga kantpunkter (±6 px, som ett fingertryck) genom en snett stående
+ * kamera - räcker det för rätt poäng mitt i banden? Detta är motivet till att
+ * `computeCalibration` är överbestämd med LM-refinement i stället för en exakt
+ * fyrapunktslösning.
+ */
+describe('grov utpekning: 8 kantpunkter med fingerbrus ger rätt poäng', () => {
+  const cam = syntheticCamera({
+    distanceMM: 2200,
+    focalPx: 1500,
+    pitch: 0.32,
+    yaw: 0.1,
+    roll: -0.04,
+    principalPoint: { x: 640, y: 360 },
+  });
+  const rng = mulberry32(20260908);
+  const jitterPx = () => (rng() - 0.5) * 12; // ~±6 px
+
+  const boardPts: Point[] = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return { x: BOARD_MM.doubleOuter * Math.cos(rad), y: BOARD_MM.doubleOuter * Math.sin(rad) };
+  });
+  const imagePts = boardPts.map((p) => {
+    const ip = cam.project(p.x, p.y);
+    return { x: ip.x + jitterPx(), y: ip.y + jitterPx() };
+  });
+  const calib = computeCalibration(boardPts, imagePts)!;
+
+  it('residualen håller sig under en handfull pixlar', () => {
+    expect(calib.residualPx).toBeLessThan(8);
+  });
+
+  it.each([
+    [103, 0, 'T20'],
+    [140, 18, 'S1'],
+    [166, 90, 'D6'],
+    [90, 180, 'S3'],
+    [103, 252, 'T8'],
+    [166, 270, 'D11'],
+    [0, 0, 'DB'],
+  ] as const)('mitt i bandet: r=%i mm, %i° -> %s', (r, deg, label) => {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    const bp = { x: r * Math.cos(rad), y: r * Math.sin(rad) };
+    const px = cam.project(bp.x, bp.y);
+    const back = calib.unproject(px.x, px.y);
+    expect(getScoreFromCanonicalCoordinates(back.x, back.y).label).toBe(label);
   });
 });

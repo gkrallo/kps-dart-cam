@@ -1,163 +1,85 @@
 import { Point } from '../types';
+import { applyHomography, estimateHomography, invertMat3, type Mat3 } from './homography';
 
 /**
- * Computes a 3x3 homography matrix H mapping canonical board coordinates (X, Y)
- * where (0, -170) is top 20, (170, 0) is right 6, (0, 170) is bottom 3, (-170, 0) is left 11,
- * to screen pixels (x, y).
+ * Kanoniska kalibreringspunkter i mm: dubbelringens ytterkant (170 mm) vid
+ * sektor 20 (topp), 6 (höger), 3 (botten), 11 (vänster) - i den ordningen.
+ * Ordningen är hårdkodad överallt i appen; ändra den inte utan att ändra allt.
+ */
+export const CANONICAL_CALIBRATION_MM: readonly Point[] = [
+  { x: 0, y: -170 },
+  { x: 170, y: 0 },
+  { x: 0, y: 170 },
+  { x: -170, y: 0 },
+];
+
+/**
+ * Homografi som mappar kanoniska mm-koordinater (bullseye i origo) till
+ * skärmpixlar, given de fyra kalibreringspunkterna. Fyra punkter ger en exakt
+ * lösning, så ingen refinement behövs här. Använd `computeCalibration` när du
+ * har fler punkter och vill ha utjämning.
  */
 export function computeHomography(pts: Point[]): ((X: number, Y: number) => Point) | null {
   if (pts.length !== 4) return null;
-
-  // Canonical points corresponding to top 20, right 6, bottom 3, left 11 at R = 170
-  const src = [
-    { x: 0, y: -170 },
-    { x: 170, y: 0 },
-    { x: 0, y: 170 },
-    { x: -170, y: 0 },
-  ];
-
-  const dst = pts;
-
-  // Build matrix equation A * h = b for homography h
-  // For each pair (X, Y) -> (x, y):
-  // X*h11 + Y*h12 + h13 - x*X*h31 - x*Y*h32 = x
-  // X*h21 + Y*h22 + h23 - y*X*h31 - y*Y*h32 = y
-  const A: number[][] = [];
-  const B: number[] = [];
-
-  for (let i = 0; i < 4; i++) {
-    const { x: X, y: Y } = src[i];
-    const { x, y } = dst[i];
-
-    A.push([X, Y, 1, 0, 0, 0, -x * X, -x * Y]);
-    B.push(x);
-
-    A.push([0, 0, 0, X, Y, 1, -y * X, -y * Y]);
-    B.push(y);
-  }
-
-  // Gaussian elimination for 8x8 system
-  const solve8x8 = (mat: number[][], rhs: number[]): number[] | null => {
-    const N = 8;
-    const M = mat.map((row, i) => [...row, rhs[i]]);
-
-    for (let i = 0; i < N; i++) {
-      // Pivot
-      let maxRow = i;
-      for (let k = i + 1; k < N; k++) {
-        if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) maxRow = k;
-      }
-      [M[i], M[maxRow]] = [M[maxRow], M[i]];
-
-      if (Math.abs(M[i][i]) < 1e-9) return null;
-
-      for (let k = i + 1; k < N; k++) {
-        const c = -M[k][i] / M[i][i];
-        for (let j = i; j <= N; j++) {
-          if (i === j) M[k][j] = 0;
-          else M[k][j] += c * M[i][j];
-        }
-      }
-    }
-
-    const x = new Array(N).fill(0);
-    for (let i = N - 1; i >= 0; i--) {
-      x[i] = M[i][N] / M[i][i];
-      for (let k = i - 1; k >= 0; k--) {
-        M[k][N] -= M[k][i] * x[i];
-      }
-    }
-    return x;
-  };
-
-  const h = solve8x8(A, B);
-  if (!h) return null;
-
-  const H = [
-    [h[0], h[1], h[2]],
-    [h[3], h[4], h[5]],
-    [h[6], h[7], 1],
-  ];
-
-  return (X: number, Y: number): Point => {
-    const w = H[2][0] * X + H[2][1] * Y + 1;
-    const px = (H[0][0] * X + H[0][1] * Y + H[0][2]) / w;
-    const py = (H[1][0] * X + H[1][1] * Y + H[1][2]) / w;
-    return { x: px, y: py };
-  };
+  const est = estimateHomography([...CANONICAL_CALIBRATION_MM], pts, { refine: false });
+  if (!est) return null;
+  const { H } = est;
+  return (X: number, Y: number) => applyHomography(H, X, Y);
 }
 
 /**
- * Computes inverse homography mapping screen pixels (x, y) to canonical board plane (X, Y) in mm.
- * Canonical board: Bullseye is (0,0), Outer double ring is radius R = 170mm.
+ * Invers av `computeHomography`: skärmpixlar -> kanoniska mm.
  */
-export function computeInverseHomography(pts: Point[]): ((x: number, y: number) => { X: number; Y: number }) | null {
+export function computeInverseHomography(
+  pts: Point[],
+): ((x: number, y: number) => { X: number; Y: number }) | null {
   if (pts.length !== 4) return null;
-
-  const dst = [
-    { x: 0, y: -170 },
-    { x: 170, y: 0 },
-    { x: 0, y: 170 },
-    { x: -170, y: 0 },
-  ];
-  const src = pts;
-
-  const A: number[][] = [];
-  const B: number[] = [];
-
-  for (let i = 0; i < 4; i++) {
-    const { x: X, y: Y } = dst[i];
-    const { x, y } = src[i];
-
-    A.push([x, y, 1, 0, 0, 0, -X * x, -X * y]);
-    B.push(X);
-
-    A.push([0, 0, 0, x, y, 1, -Y * x, -Y * y]);
-    B.push(Y);
-  }
-
-  const solve8x8 = (mat: number[][], rhs: number[]): number[] | null => {
-    const N = 8;
-    const M = mat.map((row, i) => [...row, rhs[i]]);
-    for (let i = 0; i < N; i++) {
-      let maxRow = i;
-      for (let k = i + 1; k < N; k++) {
-        if (Math.abs(M[k][i]) > Math.abs(M[maxRow][i])) maxRow = k;
-      }
-      [M[i], M[maxRow]] = [M[maxRow], M[i]];
-      if (Math.abs(M[i][i]) < 1e-9) return null;
-      for (let k = i + 1; k < N; k++) {
-        const c = -M[k][i] / M[i][i];
-        for (let j = i; j <= N; j++) {
-          if (i === j) M[k][j] = 0;
-          else M[k][j] += c * M[i][j];
-        }
-      }
-    }
-    const x = new Array(N).fill(0);
-    for (let i = N - 1; i >= 0; i--) {
-      x[i] = M[i][N] / M[i][i];
-      for (let k = i - 1; k >= 0; k--) {
-        M[k][N] -= M[k][i] * x[i];
-      }
-    }
-    return x;
-  };
-
-  const h = solve8x8(A, B);
-  if (!h) return null;
-
-  const Hinv = [
-    [h[0], h[1], h[2]],
-    [h[3], h[4], h[5]],
-    [h[6], h[7], 1],
-  ];
-
+  const est = estimateHomography([...CANONICAL_CALIBRATION_MM], pts, { refine: false });
+  if (!est) return null;
+  const Hinv = invertMat3(est.H);
+  if (!Hinv) return null;
   return (x: number, y: number) => {
-    const w = Hinv[2][0] * x + Hinv[2][1] * y + 1;
-    const X = (Hinv[0][0] * x + Hinv[0][1] * y + Hinv[0][2]) / w;
-    const Y = (Hinv[1][0] * x + Hinv[1][1] * y + Hinv[1][2]) / w;
-    return { X, Y };
+    const p = applyHomography(Hinv, x, y);
+    return { X: p.x, Y: p.y };
+  };
+}
+
+export interface BoardCalibration {
+  /** mm på tavlan -> pixel i bilden. */
+  project: (X: number, Y: number) => Point;
+  /** pixel i bilden -> mm på tavlan. */
+  unproject: (x: number, y: number) => Point;
+  /** Kvadratiskt medel av reprojektionsfelet för kalibreringspunkterna (px). */
+  residualPx: number;
+  /** Största enskilda reprojektionsfelet (px). En stor topp = en dålig punkt. */
+  maxResidualPx: number;
+  H: Mat3;
+}
+
+/**
+ * Överbestämd kalibrering. `boardPointsMM` och `imagePoints` är par (samma
+ * längd, minst fyra). Med fler än fyra par körs LM-refinement som minimerar
+ * reprojektionsfelet, och `residualPx` säger hur bra passningen blev - det är
+ * måttet UI:t kan visa som "kalibrering: bra / sådär / dålig".
+ */
+export function computeCalibration(
+  boardPointsMM: Point[],
+  imagePoints: Point[],
+  opts: { refine?: boolean } = {},
+): BoardCalibration | null {
+  if (boardPointsMM.length !== imagePoints.length || boardPointsMM.length < 4) return null;
+
+  const est = estimateHomography(boardPointsMM, imagePoints, opts);
+  if (!est) return null;
+  const Hinv = invertMat3(est.H);
+  if (!Hinv) return null;
+
+  return {
+    project: (X, Y) => applyHomography(est.H, X, Y),
+    unproject: (x, y) => applyHomography(Hinv, x, y),
+    residualPx: est.rms,
+    maxResidualPx: est.max,
+    H: est.H,
   };
 }
 
