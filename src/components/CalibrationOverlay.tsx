@@ -382,16 +382,16 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       </svg>
 
       {/* TOP FLOATING BAR: Auto-Detect & Zoom Controls */}
-      <div className="absolute top-3 left-3 right-3 pointer-events-auto flex items-center justify-between gap-2 z-20">
-        <div className="flex items-center gap-2">
+      <div className="absolute top-3 left-3 right-3 pointer-events-auto flex items-start justify-between gap-2 z-20">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <button
             onClick={handleAutoDetect}
             disabled={isDetecting}
-            className="bg-amber-500 hover:bg-amber-400 active:scale-95 disabled:opacity-50 text-slate-950 px-3 py-2 rounded-2xl font-bold text-xs flex items-center gap-1.5 shadow-xl shadow-amber-500/20 backdrop-blur-md border border-amber-400/50 transition-all"
+            className="bg-amber-500 hover:bg-amber-400 active:scale-95 disabled:opacity-50 text-slate-950 px-3 py-2 rounded-2xl font-bold text-xs flex items-center gap-1.5 shadow-xl shadow-amber-500/20 backdrop-blur-md border border-amber-400/50 transition-all shrink-0"
           >
             <Sparkles className="w-4 h-4" />
             <span className="hidden sm:inline">Auto-Kalibrera Tavla</span>
-            <span className="sm:hidden">Auto-Kalibrera</span>
+            <span className="sm:hidden">Auto</span>
           </button>
 
           <button
@@ -417,7 +417,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </button>
 
           {detectStatus && (
-            <span className="text-[11px] text-amber-300 font-semibold bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-amber-500/40 shadow-lg">
+            <span className="w-full sm:w-auto sm:max-w-xs text-[11px] leading-snug text-amber-300 font-semibold bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-amber-500/40 shadow-lg">
               {detectStatus}
             </span>
           )}
@@ -427,7 +427,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             Digital CSS-zoom är borttagen: den beskar bara bilden utan att
             tillföra en enda pixel, och gav dubbel zoom ihop med hårdvaran. */}
         {onZoomChange && zoomCapability?.supported && (
-          <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-xl">
+          <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-xl shrink-0">
             <ZoomIn className="w-3.5 h-3.5 text-blue-400" />
             <input
               type="range"

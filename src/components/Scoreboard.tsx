@@ -46,9 +46,9 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   return (
     <div className="bg-slate-900 border-t border-slate-800 shadow-[0_-10px_30px_rgba(0,0,0,0.6)] p-3 sm:p-4 flex flex-col gap-3 z-10 select-none">
       {/* Top row: 501 Big Score + Turn Darts + Game Controls */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {/* Big Remaining Score */}
-        <div className="flex flex-col items-center justify-center bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 min-w-[120px]">
+        <div className="flex flex-col items-center justify-center bg-slate-950 px-3 sm:px-4 py-2 rounded-2xl border border-slate-800 min-w-[92px] shrink-0">
           <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Aktiv Poäng</span>
           <div className="text-4xl sm:text-5xl font-black tabular-nums tracking-tight text-amber-400">
             {currentScore}
@@ -56,14 +56,14 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
         </div>
 
         {/* Current Turn Darts (3 Slots) */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-1.5">
-          <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-[140px] flex flex-col items-center justify-center gap-1.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {[0, 1, 2].map((index) => {
               const dart = currentTurnDarts[index];
               return (
                 <div
                   key={index}
-                  className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl border flex flex-col items-center justify-center font-bold text-sm sm:text-base shadow-sm transition-all ${
+                  className={`w-11 h-11 sm:w-14 sm:h-14 rounded-xl border flex flex-col items-center justify-center font-bold text-sm sm:text-base shadow-sm transition-all ${
                     dart
                       ? 'bg-slate-800 border-blue-500/50 text-white scale-105'
                       : 'bg-slate-950/60 border-slate-800 text-slate-600'
@@ -92,7 +92,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
         </div>
 
         {/* Action buttons: Undo & Reset */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 shrink-0">
           <button
             onClick={onUndo}
             className="flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold border border-slate-700 transition-colors"
@@ -112,6 +112,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
           </button>
         </div>
       </div>
+      {/* Notera: den här panelen skrivs om för spellägena (301/501/Farfar). */}
 
       {/* Bottom Controls Bar (Calibration & Vision Debug) */}
       <div className="flex items-center justify-between border-t border-slate-800/80 pt-2.5 text-xs">

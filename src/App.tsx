@@ -139,38 +139,42 @@ export default function App() {
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
       {/* Header */}
-      <header className="absolute top-0 w-full z-20 p-3 sm:p-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex justify-between items-center pointer-events-none">
-        <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white drop-shadow-md">KPs DartApp 501</h1>
+      <header className="absolute top-0 w-full z-20 p-3 sm:p-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex justify-between items-center gap-2 pointer-events-none">
+        <h1 className="text-base sm:text-xl font-bold tracking-tight text-white drop-shadow-md truncate min-w-0">
+          KPs DartApp
+        </h1>
 
         {/* View Mode Switcher (Live vs Vision 2D View) */}
         {isCalibrated && (
-          <div className="pointer-events-auto bg-slate-950/90 border border-slate-800 p-1 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-1">
+          <div className="pointer-events-auto bg-slate-950/90 border border-slate-800 p-1 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-1 shrink-0">
             <button
               onClick={() => setViewMode('live')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              aria-label="Live-kamera"
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                 viewMode === 'live'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
-              <span>Live View</span>
+              <span className="hidden sm:inline">Live</span>
             </button>
             <button
               onClick={() => setViewMode('vision')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              aria-label="Vision 2D-vy"
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                 viewMode === 'vision'
                   ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Eye className="w-3.5 h-3.5 text-emerald-300" />
-              <span>Vision View</span>
+              <span className="hidden sm:inline">Vision</span>
             </button>
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
            {isLoaded ? (
               <span className="flex h-3 w-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" title="OpenCV Datorseende Aktivt"></span>
            ) : (
@@ -209,14 +213,14 @@ export default function App() {
         {viewMode === 'vision' && (
           <div className="relative w-full h-full flex flex-col items-center justify-center p-4 bg-slate-950">
             {/* Top Vision Banner HUD */}
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 bg-slate-900/90 border border-emerald-500/40 px-4 py-2 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3">
-              <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
-              <div className="flex flex-col">
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 max-w-[92vw] bg-slate-900/90 border border-emerald-500/40 px-4 py-2 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping shrink-0" />
+              <div className="flex flex-col min-w-0">
                 <span className="text-emerald-400 font-bold text-xs uppercase tracking-wider">
-                  Vision Mode (2D Perspektivkorrigerad Vy)
+                  Vision-läge (2D-vy)
                 </span>
-                <span className="text-slate-400 text-[10px]">
-                  Visar var datorseendet beräknar att pilarna träffat på tavlan.
+                <span className="text-slate-400 text-[10px] truncate">
+                  Var datorseendet tror att pilarna träffat.
                 </span>
               </div>
             </div>
@@ -235,7 +239,7 @@ export default function App() {
 
         {/* Dart Hit Toast Indicator */}
         {lastScoredDartLabel && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 animate-bounce bg-blue-600/90 text-white font-black text-2xl sm:text-3xl px-6 py-2 rounded-2xl border-2 border-blue-400 shadow-2xl backdrop-blur-md">
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 animate-bounce bg-blue-600/90 text-white font-black text-2xl sm:text-3xl px-6 py-2 rounded-2xl border-2 border-blue-400 shadow-2xl backdrop-blur-md whitespace-nowrap">
             + {lastScoredDartLabel}
           </div>
         )}
