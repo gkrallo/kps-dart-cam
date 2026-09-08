@@ -23,12 +23,30 @@ const OPENCV_URL = `${import.meta.env.BASE_URL}opencv.js`;
  */
 let loader: Promise<any> | null = null;
 
+/**
+ * OpenCV.js-bygget vi använder är gammal emscripten och lägger en `then` på
+ * modulobjektet som "löser upp" till sig självt och aldrig tar bort sig. Ger man
+ * det objektet till en Promise-resolve behandlar JS-motorn det som en thenable,
+ * anropar `then`, får tillbaka samma thenable, anropar `then` igen ... en
+ * oändlig microtask-loop som fryser huvudtråden. På telefonen syntes det som att
+ * appen fastnade för evigt på "Laddar datorseende-motor" (huvudtråden död, så
+ * inte ens 30 s-timeouten nedan hann köra). Nyare emscripten gör exakt det här:
+ * tar bort `then` så objektet inte längre är thenable. Vi måste göra det själva
+ * innan modulen lämnas vidare.
+ */
+export function unwrapCvModule(mod: any): any {
+  if (mod && typeof mod.then === 'function') {
+    delete mod.then;
+  }
+  return mod;
+}
+
 function loadOpenCV(): Promise<any> {
   if (loader) return loader;
 
   loader = new Promise((resolve, reject) => {
     if (window.cv?.Mat) {
-      resolve(window.cv);
+      resolve(unwrapCvModule(window.cv));
       return;
     }
 
@@ -54,7 +72,7 @@ function loadOpenCV(): Promise<any> {
       const poll = window.setInterval(() => {
         if (window.cv?.Mat) {
           window.clearInterval(poll);
-          resolve(window.cv);
+          resolve(unwrapCvModule(window.cv));
         } else if (Date.now() - started > 30000) {
           window.clearInterval(poll);
           reject(
@@ -74,7 +92,7 @@ function loadOpenCV(): Promise<any> {
 }
 
 export const useOpenCV = () => {
-  const [cv, setCv] = useState<any>(() => (window.cv?.Mat ? window.cv : null));
+  const [cv, setCv] = useState<any>(() => (window.cv?.Mat ? unwrapCvModule(window.cv) : null));
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
