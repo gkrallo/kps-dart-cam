@@ -63,10 +63,6 @@ export const useDartDetector = (
   useEffect(() => {
     if (!cv || !videoElement || !transformMatrix || !isActive) return;
 
-    const hiddenCanvas = document.createElement('canvas');
-    const ctx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-
     const dsize = new cv.Size(BOARD_PX, BOARD_PX);
     const border = new cv.Scalar(0, 0, 0, 255);
 
@@ -105,10 +101,20 @@ export const useDartDetector = (
     let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
 
     const grabFrame = () => {
-      hiddenCanvas.width = videoElement.videoWidth;
-      hiddenCanvas.height = videoElement.videoHeight;
-      ctx.drawImage(videoElement, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
-      const frame = cv.imread(hiddenCanvas);
+      // En NY canvas varje bildruta. En återanvänd canvas med
+      // willReadFrequently slutade ta emot nya videobildrutor på Android/Chrome
+      // (Galaxy S25): drawImage(video) gav samma frusna bild om och om igen, så
+      // movementNoise låste på 0 och ingen pil kunde detekteras trots att
+      // videon uppenbart ändrades. En färsk GPU-backad canvas läser om varje
+      // gång. getImageData sker då bara en gång per canvas → ingen
+      // willReadFrequently-varning och ingen frysning.
+      const canvas = document.createElement('canvas');
+      canvas.width = videoElement.videoWidth;
+      canvas.height = videoElement.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+      const frame = cv.imread(canvas);
       cv.warpPerspective(frame, warped, transformMatrix, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, border);
       cv.cvtColor(warped, gray, cv.COLOR_RGBA2GRAY);
       // Sudda i GRÅSKALA, före tröskling. Den gamla koden suddade den binära
@@ -343,12 +349,14 @@ export const useDartDetector = (
         }
 
         // Långsam baseline-uppdatering: kamerans autoexponering/vitbalans driver
-        // med tiden, och då slutar en landad pil att sticka ut. Om scenen varit
-        // i stort sett helt orörd (ingen pil ligger och väntar) i 4 s: uppdatera
-        // referensbilden så driften inte ackumuleras.
-        if (baselineNoise < 250 && movementNoise < 400) {
+        // med tiden, och då slutar en landad pil att sticka ut. Bara om scenen
+        // varit i stort sett helt orörd (ingen pil ligger och väntar) i 15 s:
+        // uppdatera referensbilden så driften inte ackumuleras. Snålt tilltaget
+        // med flit - en för ivrig uppdatering äter en pil som ännu inte hunnit
+        // analyseras.
+        if (baselineNoise < 120 && movementNoise < 200) {
           if (calmSince === 0) calmSince = now;
-          else if (now - calmSince > 4000) {
+          else if (now - calmSince > 15000) {
             baseline.delete();
             baseline = gray.clone();
             rawBaseline.delete();
