@@ -41,6 +41,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [points, setPoints] = useState<Point[]>([]);
   const [activeIdx, setActiveIdx] = useState<number>(0);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const loupeRef = useRef<HTMLCanvasElement>(null);
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
   const [detectStatus, setDetectStatus] = useState<string | null>(null);
   const [showDpad, setShowDpad] = useState<boolean>(false);
@@ -214,7 +215,72 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     prevZoomRef.current = zoomLevel;
   }, [zoomLevel, containerWidth, containerHeight]);
 
+  // Förstoringsglas medan man drar en punkt: fingret skymmer själva pixeln man
+  // försöker pricka, så en cirkulär ~3x-inzoomning ritas ovanför fingret med ett
+  // hårkors. Videon visas med object-cover (skalad Math.max, centrerad) - samma
+  // mappning måste användas för att plocka rätt videopixel.
+  const LOUPE = 132;
+  const LOUPE_ZOOM = 3;
+
+  useEffect(() => {
+    const canvas = loupeRef.current;
+    if (draggingIdx === null || !canvas || !videoElement || videoElement.videoWidth === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const p = points[draggingIdx];
+    if (!p) return;
+
+    const vw = videoElement.videoWidth;
+    const vh = videoElement.videoHeight;
+    const scale = Math.max(containerWidth / vw, containerHeight / vh);
+    const offX = (containerWidth - vw * scale) / 2;
+    const offY = (containerHeight - vh * scale) / 2;
+    const vx = (p.x - offX) / scale;
+    const vy = (p.y - offY) / scale;
+
+    const srcSize = LOUPE / (scale * LOUPE_ZOOM);
+
+    ctx.clearRect(0, 0, LOUPE, LOUPE);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(LOUPE / 2, LOUPE / 2, LOUPE / 2, 0, Math.PI * 2);
+    ctx.clip();
+    try {
+      ctx.drawImage(videoElement, vx - srcSize / 2, vy - srcSize / 2, srcSize, srcSize, 0, 0, LOUPE, LOUPE);
+    } catch {
+      // drawImage kan kasta om videon inte är redo - hoppa över bildrutan
+    }
+    // Hårkors
+    ctx.strokeStyle = 'rgba(59,130,246,0.95)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(LOUPE / 2, LOUPE / 2 - 14);
+    ctx.lineTo(LOUPE / 2, LOUPE / 2 + 14);
+    ctx.moveTo(LOUPE / 2 - 14, LOUPE / 2);
+    ctx.lineTo(LOUPE / 2 + 14, LOUPE / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(LOUPE / 2, LOUPE / 2, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }, [draggingIdx, points, videoElement, containerWidth, containerHeight]);
+
   const labels = ['Topp (20)', 'Höger (6)', 'Botten (3)', 'Vänster (11)'];
+
+  // Placera förstoringsglaset ovanför fingret, eller under om punkten sitter
+  // högt upp, och håll det innanför skärmkanterna.
+  const loupePos = (() => {
+    if (draggingIdx === null) return null;
+    const p = points[draggingIdx];
+    if (!p) return null;
+    const margin = 8;
+    let top = p.y - LOUPE - 48;
+    if (top < margin) top = p.y + 48;
+    let left = p.x - LOUPE / 2;
+    left = Math.max(margin, Math.min(left, containerWidth - LOUPE - margin));
+    return { left, top };
+  })();
 
   // Calculate 3D projective wireframe using Homography
   const project = computeHomography(points);
@@ -380,6 +446,17 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </g>
         ))}
       </svg>
+
+      {/* Förstoringsglas medan en punkt dras */}
+      {loupePos && (
+        <canvas
+          ref={loupeRef}
+          width={LOUPE}
+          height={LOUPE}
+          className="absolute z-30 pointer-events-none rounded-full border-2 border-blue-400 shadow-2xl bg-slate-950"
+          style={{ left: loupePos.left, top: loupePos.top, width: LOUPE, height: LOUPE }}
+        />
+      )}
 
       {/* TOP FLOATING BAR: Auto-Detect & Zoom Controls */}
       <div className="absolute top-3 left-3 right-3 pointer-events-auto flex items-start justify-between gap-2 z-20">

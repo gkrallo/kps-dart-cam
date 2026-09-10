@@ -107,6 +107,11 @@ export const useDartDetector = (
     let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
     let grabDiag = ''; // diagnostiksträng från grabFrame
     let frameCount = 0;
+    let lastRegisterTime = 0; // tidsspärr mot dubbeldetektering av samma pil
+
+    // ~13 mm i den warpade bilden (2.3529 px/mm). Under det är "ny pil" troligen
+    // samma pil igen.
+    const MIN_DART_SPACING_PX = 30;
 
     const grabFrame = () => {
       // En NY canvas varje bildruta. En återanvänd canvas med
@@ -249,10 +254,31 @@ export const useDartDetector = (
 
         if (tipRaw) {
           const tip = warpPoint(tipRaw);
-          detectedDartsRef.current.push(tip);
-          dartsSinceClear++;
-          lastAnalysis = `PIL registrerad (${bestArea | 0} px, ${how})`;
-          onDartDetectedRef.current(tip);
+
+          // Dubbeldetektering: efter att en pil registrerats visade råbilden i
+          // några bildrutor kvarvarande skillnad (pilen svänger in sig, fjädrar)
+          // och samma pil räknades två gånger. Två spärrar:
+          //  - tidsspärr: minst 1 s mellan registreringar.
+          //  - platsspärr: ingen ny pil inom MIN_DART_SPACING_PX av en redan
+          //    registrerad. Två pilar kan sitta tätt men aldrig i exakt samma
+          //    punkt.
+          const nowMs = performance.now();
+          const tooSoon = nowMs - lastRegisterTime < 1000;
+          const tooClose = detectedDartsRef.current.some(
+            (d) => Math.hypot(d.x - tip.x, d.y - tip.y) < MIN_DART_SPACING_PX,
+          );
+
+          if (tooSoon) {
+            lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
+          } else if (tooClose) {
+            lastAnalysis = `pil ignorerad (för nära en redan registrerad, samma pil?)`;
+          } else {
+            lastRegisterTime = nowMs;
+            detectedDartsRef.current.push(tip);
+            dartsSinceClear++;
+            lastAnalysis = `PIL registrerad (${bestArea | 0} px, ${how})`;
+            onDartDetectedRef.current(tip);
+          }
         } else {
           lastAnalysis = `blob OK (${bestArea | 0} px) men ${how}`;
         }
