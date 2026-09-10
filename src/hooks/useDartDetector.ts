@@ -113,6 +113,13 @@ export const useDartDetector = (
     // samma pil igen.
     const MIN_DART_SPACING_PX = 30;
 
+    // Uppstartsspärr: när spelet startar rör sig ofta användaren fortfarande i
+    // bild (tryckte just på "Starta spel"). Referensbilden tas då med rörelse i,
+    // och när scenen lugnar sig tolkas skillnaden som en pil. Ignorera all
+    // avkänning de första 2 s.
+    const startedAt = performance.now();
+    const STARTUP_GRACE_MS = 2000;
+
     const grabFrame = () => {
       // En NY canvas varje bildruta. En återanvänd canvas med
       // willReadFrequently slutade ta emot nya videobildrutor på Android/Chrome
@@ -229,9 +236,13 @@ export const useDartDetector = (
         let how = '';
         try {
           const axis = detectDartAxisTip(points, { minElongation: 2 });
+          // Konfidensgräns 0.4: uppmätt på tre testrundor låg riktiga kast på
+          // 0.55-0.75, medan spökkasten (armkant/skugga som råkar bli avlång)
+          // låg på 0.20-0.23. Gapet däremellan är tomt. Gamla gränsen 0.15
+          // släppte igenom en spökpil i början av varje spel.
           if (axis && axis.elongation > MAX_ELONGATION) {
             how = `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_ELONGATION} (kant/tråd/skugga, inte pil)`;
-          } else if (axis && axis.confidence > 0.15) {
+          } else if (axis && axis.confidence > 0.4) {
             // Axelanpassning + breddtest: fenan är bredare än spetsen.
             tipRaw = axis.tip;
             how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
@@ -373,7 +384,11 @@ export const useDartDetector = (
         if (now - lastMotionTime > 500) {
           isStabilizing = false;
           state = 'ANALYZING';
-          analyseNewBlob();
+          if (now - startedAt > STARTUP_GRACE_MS) {
+            analyseNewBlob();
+          } else {
+            lastAnalysis = 'hoppar över (uppstartsspärr)';
+          }
           gray.copyTo(baseline);
           rawGray.copyTo(rawBaseline);
         } else {
