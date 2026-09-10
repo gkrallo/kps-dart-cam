@@ -190,9 +190,11 @@ export const useDartDetector = (
       }
 
       // Arean är relativ bildstorleken nu (rå bild, inte den fasta 800x800:an).
+      // maxArea sänkt till 2.5 %: riktiga kast från stativet mätte 7 000-18 000 px,
+      // en arm/hand vid pilhämtning ~80 000 px och slank igenom det gamla 5 %-taket.
       const frameArea = rawGray.rows * rawGray.cols || 1;
       const minArea = frameArea * 0.0002;
-      const maxArea = frameArea * 0.05;
+      const maxArea = frameArea * 0.025;
       const nContours = contours.size();
 
       if (bestIdx === -1) {
@@ -233,9 +235,12 @@ export const useDartDetector = (
             // Axelanpassning + breddtest: fenan är bredare än spetsen.
             tipRaw = axis.tip;
             how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
-          } else if (elongation >= 2.5 && elongation <= MAX_ELONGATION) {
+          } else if (elongation >= 2.5 && elongation <= 5) {
             // Nästan frontal pil: axeln går inte att lita på. Blobbens
             // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
+            // Taket är 5, inte MAX_ELONGATION: en frontal pil är en kompakt
+            // klump (~2.5-4). Är blobben 9:1 är den en strimma (kant/skugga),
+            // inte en pil sedd framifrån - två sådana slank igenom tidigare.
             let mx = 0;
             let my = 0;
             for (const p of points) {
@@ -245,7 +250,7 @@ export const useDartDetector = (
             tipRaw = { x: mx / points.length, y: my / points.length };
             how = `tyngdpunkt (elong ${elongation.toFixed(1)})`;
           } else {
-            how = `för rund: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} < 2.5`;
+            how = `förkastad: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) + ' elong ' + axis.elongation.toFixed(1) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} (utanför 2.5-5)`;
           }
         } catch (err) {
           console.error('Spetsdetektering misslyckades:', err);
