@@ -212,15 +212,23 @@ export const useDartDetector = (
         const short = Math.max(Math.min(rect.size.width, rect.size.height), 1);
         const elongation = long / short;
 
+        // Övre gräns: en pil sedd från stativet mäter elong ~3-5 (uppmätt på
+        // riktiga kast). elong > 12 är en LINJE - spindeltråd, tavelkant,
+        // skuggrand, kabel - inte en pil. Utan taket registrerades sådant som
+        // spökkast (t.ex. en 24:1-strimma innan första kastet).
+        const MAX_ELONGATION = 12;
+
         let tipRaw: Point | null = null;
         let how = '';
         try {
           const axis = detectDartAxisTip(points, { minElongation: 2 });
-          if (axis && axis.confidence > 0.15) {
+          if (axis && axis.elongation > MAX_ELONGATION) {
+            how = `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_ELONGATION} (kant/tråd/skugga, inte pil)`;
+          } else if (axis && axis.confidence > 0.15) {
             // Axelanpassning + breddtest: fenan är bredare än spetsen.
             tipRaw = axis.tip;
             how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
-          } else if (elongation >= 2.5) {
+          } else if (elongation >= 2.5 && elongation <= MAX_ELONGATION) {
             // Nästan frontal pil: axeln går inte att lita på. Blobbens
             // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
             let mx = 0;
