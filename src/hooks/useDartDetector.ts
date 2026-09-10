@@ -13,6 +13,17 @@ const RING_PX = {
   doubleOuter: BOARD_MM.doubleOuter * PX_PER_MM,
 };
 
+export interface DetectorDebug {
+  state: string;
+  /** Skilda pixlar mot referensbilden (av 640 000 i den warpade bilden). */
+  baselineNoise: number;
+  /** Skilda pixlar mot föregående bildruta. */
+  movementNoise: number;
+  motionThreshold: number;
+  /** Senaste blobanalysen: varför blev det (inte) en pil. */
+  lastAnalysis?: string;
+}
+
 export const useDartDetector = (
   cv: any,
   videoElement: HTMLVideoElement | null,
@@ -21,9 +32,11 @@ export const useDartDetector = (
   motionThreshold: number,
   debugCanvasRef: RefObject<HTMLCanvasElement | null>,
   onDartDetected: (tip: Point) => void,
-  onDebugState?: (state: string, noise: number) => void,
+  onDebugState?: (info: DetectorDebug) => void,
   /** Anropas när tavlan blivit tömd på pilar igen (efter minst en detekterad pil). */
   onBoardCleared?: () => void,
+  /** Loggar utförligt till konsolen. Styrs av ?debug i URL:en. */
+  debug = false,
 ) => {
   // Callbacks i refs: annars byggs hela effekten om vid varje kast, eftersom
   // onDartDetected får ny identitet när poängen ändras. Det allokerade om alla
@@ -32,11 +45,13 @@ export const useDartDetector = (
   const onDebugStateRef = useRef(onDebugState);
   const onBoardClearedRef = useRef(onBoardCleared);
   const motionThresholdRef = useRef(motionThreshold);
+  const debugRef = useRef(debug);
   useEffect(() => {
     onDartDetectedRef.current = onDartDetected;
     onDebugStateRef.current = onDebugState;
     onBoardClearedRef.current = onBoardCleared;
     motionThresholdRef.current = motionThreshold;
+    debugRef.current = debug;
   });
 
   const detectedDartsRef = useRef<Point[]>([]);
@@ -83,6 +98,11 @@ export const useDartDetector = (
     let stopped = false;
     let isStabilizing = false;
     let lastMotionTime = 0;
+    let lastAnalysis: string | undefined;
+    let lastLogTime = 0;
+    let lastDebugEmit = 0;
+    let lastEmittedState = '';
+    let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
 
     const grabFrame = () => {
       hiddenCanvas.width = videoElement.videoWidth;
@@ -144,6 +164,15 @@ export const useDartDetector = (
       const frameArea = rawGray.rows * rawGray.cols || 1;
       const minArea = frameArea * 0.0002;
       const maxArea = frameArea * 0.05;
+      const nContours = contours.size();
+
+      if (bestIdx === -1) {
+        lastAnalysis = `ingen kontur (rå diff för liten)`;
+      } else if (bestArea <= minArea) {
+        lastAnalysis = `blob för liten: ${bestArea | 0} < ${minArea | 0} px`;
+      } else if (bestArea >= maxArea) {
+        lastAnalysis = `blob för stor: ${bestArea | 0} > ${maxArea | 0} px (hand/skugga/exponering?)`;
+      }
 
       if (bestIdx !== -1 && bestArea > minArea && bestArea < maxArea) {
         const contour = contours.get(bestIdx);
@@ -160,11 +189,13 @@ export const useDartDetector = (
         const elongation = long / short;
 
         let tipRaw: Point | null = null;
+        let how = '';
         try {
           const axis = detectDartAxisTip(points, { minElongation: 2 });
           if (axis && axis.confidence > 0.15) {
             // Axelanpassning + breddtest: fenan är bredare än spetsen.
             tipRaw = axis.tip;
+            how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
           } else if (elongation >= 2.5) {
             // Nästan frontal pil: axeln går inte att lita på. Blobbens
             // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
@@ -175,19 +206,27 @@ export const useDartDetector = (
               my += p.y;
             }
             tipRaw = { x: mx / points.length, y: my / points.length };
+            how = `tyngdpunkt (elong ${elongation.toFixed(1)})`;
+          } else {
+            how = `för rund: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} < 2.5`;
           }
         } catch (err) {
           console.error('Spetsdetektering misslyckades:', err);
+          how = 'krasch i spetsdetektering';
         }
 
         if (tipRaw) {
           const tip = warpPoint(tipRaw);
           detectedDartsRef.current.push(tip);
           dartsSinceClear++;
+          lastAnalysis = `PIL registrerad (${bestArea | 0} px, ${how})`;
           onDartDetectedRef.current(tip);
+        } else {
+          lastAnalysis = `blob OK (${bestArea | 0} px) men ${how}`;
         }
       }
 
+      if (debugRef.current) console.log('[analyse]', nContours, 'konturer →', lastAnalysis);
       contours.delete();
       hierarchy.delete();
     };
@@ -296,13 +335,58 @@ export const useDartDetector = (
             baseline = gray.clone();
             rawBaseline.delete();
             rawBaseline = rawGray.clone();
+            calmSince = 0;
             state = 'CLEARED';
+            lastAnalysis = 'tavlan tömd → spelarbyte';
             onBoardClearedRef.current?.();
           }
         }
+
+        // Långsam baseline-uppdatering: kamerans autoexponering/vitbalans driver
+        // med tiden, och då slutar en landad pil att sticka ut. Om scenen varit
+        // i stort sett helt orörd (ingen pil ligger och väntar) i 4 s: uppdatera
+        // referensbilden så driften inte ackumuleras.
+        if (baselineNoise < 250 && movementNoise < 400) {
+          if (calmSince === 0) calmSince = now;
+          else if (now - calmSince > 4000) {
+            baseline.delete();
+            baseline = gray.clone();
+            rawBaseline.delete();
+            rawBaseline = rawGray.clone();
+            if (dartsSinceClear === 0) {
+              emptyBaseline.delete();
+              emptyBaseline = gray.clone();
+            }
+            calmSince = now;
+            if (debugRef.current) console.log('[det] baseline uppdaterad (drift)');
+          }
+        } else {
+          calmSince = 0;
+        }
       }
 
-      onDebugStateRef.current?.(state, movementNoise);
+      if (debugRef.current && now - lastLogTime > 700) {
+        lastLogTime = now;
+        console.log(
+          `[det] ${state}  baselineNoise=${baselineNoise}  movementNoise=${movementNoise}` +
+            `  (motionTröskel=${motionThresholdRef.current}, baselineTröskel=500)` +
+            (lastAnalysis ? `  senaste: ${lastAnalysis}` : ''),
+        );
+      }
+
+      // Strypt: bara vid tillståndsbyte eller var 400:e ms - annars re-renderas
+      // App varje bildruta.
+      if (state !== lastEmittedState || now - lastDebugEmit > 400) {
+        lastEmittedState = state;
+        lastDebugEmit = now;
+        onDebugStateRef.current?.({
+          state,
+          baselineNoise,
+          movementNoise,
+          motionThreshold: motionThresholdRef.current,
+          lastAnalysis,
+        });
+      }
       drawOverlay(state);
     };
 

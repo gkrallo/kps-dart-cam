@@ -4,7 +4,7 @@ import { CameraFeed } from './components/CameraFeed';
 import { useOpenCV } from './hooks/useOpenCV';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { Point } from './types';
-import { useDartDetector } from './hooks/useDartDetector';
+import { useDartDetector, type DetectorDebug } from './hooks/useDartDetector';
 import { useMatch } from './hooks/useMatch';
 import { getScoreFromPixel } from './utils/dartMath';
 import { audioEngine } from './utils/audioEngine';
@@ -22,8 +22,10 @@ export default function App() {
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [detectorState, setDetectorState] = useState<string>('INACTIVE');
-  const [, setNoiseLevel] = useState<number>(0);
+  const [debugInfo, setDebugInfo] = useState<DetectorDebug | null>(null);
   const [motionThreshold, setMotionThreshold] = useState<number>(3000);
+  const debugMode =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [zoomCapability, setZoomCapability] = useState<ZoomCapability>({
     supported: false, min: 1, max: 1, step: 0.1,
@@ -85,9 +87,9 @@ export default function App() {
     }
   }, [match, finishTurn]);
 
-  const handleDebugState = useCallback((s: string, noise: number) => {
-    setDetectorState(s);
-    setNoiseLevel(noise);
+  const handleDebugState = useCallback((info: DetectorDebug) => {
+    setDetectorState(info.state);
+    setDebugInfo(info);
   }, []);
 
   useDartDetector(
@@ -100,6 +102,7 @@ export default function App() {
     handleDartDetected,
     handleDebugState,
     handleBoardCleared,
+    debugMode,
   );
 
   // Vinst: annonsera och slutför turen så matchen registreras klar.
@@ -245,6 +248,16 @@ export default function App() {
             <div className="relative aspect-square max-w-[85vh] max-h-[85vh] w-full bg-black rounded-3xl overflow-hidden border-2 border-emerald-500/40 shadow-[0_0_50px_rgba(16,185,129,0.2)] flex items-center justify-center">
               <canvas ref={debugCanvasRef} width={800} height={800} className="w-full h-full object-contain" />
             </div>
+          </div>
+        )}
+
+        {/* Debug HUD (?debug i URL:en) */}
+        {debugMode && debugInfo && (
+          <div className="absolute bottom-2 left-2 z-40 max-w-[70vw] bg-black/85 text-[10px] leading-tight font-mono text-emerald-300 px-2.5 py-2 rounded-lg border border-emerald-800/50 pointer-events-none">
+            <div className="text-white font-bold">{debugInfo.state}</div>
+            <div>baselineNoise {debugInfo.baselineNoise} <span className="text-slate-500">(&gt;500 → analys)</span></div>
+            <div>movementNoise {debugInfo.movementNoise} <span className="text-slate-500">(&gt;{debugInfo.motionThreshold} → rörelse)</span></div>
+            {debugInfo.lastAnalysis && <div className="text-amber-300 mt-1">{debugInfo.lastAnalysis}</div>}
           </div>
         )}
 
