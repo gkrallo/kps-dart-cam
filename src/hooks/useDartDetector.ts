@@ -82,12 +82,18 @@ export const useDartDetector = (
     const emptyDiff = new cv.Mat();
     const emptyThresh = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-    let baseline: any = null;
-    let previous: any = null;
-    let rawBaseline: any = null;
+    // Referensbilderna. VIKTIGT: uppdatera dem med `gray.copyTo(baseline)`, ALDRIG
+    // `baseline = gray.clone()`. I den här OpenCV.js-byggen delar `Mat.clone()`
+    // databufferten med källan (verifierat: clonens pixlar ändras när källan
+    // ändras) - så en klonad baseline blev i praktiken samma bild som `gray`,
+    // `absdiff` gav alltid 0 och ingen pil kunde detekteras. `copyTo` kopierar
+    // på riktigt.
+    const baseline = new cv.Mat();
+    const previous = new cv.Mat();
+    const rawBaseline = new cv.Mat();
     // Referensbild av den TOMMA tavlan (vid speluppstart). Används bara för att
     // avgöra när tavlan blivit tömd på pilar igen -> automatiskt spelarbyte.
-    let emptyBaseline: any = null;
+    const emptyBaseline = new cv.Mat();
     let dartsSinceClear = 0;
 
     let rafId = 0;
@@ -139,10 +145,10 @@ export const useDartDetector = (
 
     if (videoElement.videoWidth === 0) return;
     grabFrame();
-    baseline = gray.clone();
-    previous = gray.clone();
-    emptyBaseline = gray.clone();
-    rawBaseline = rawGray.clone();
+    gray.copyTo(baseline);
+    gray.copyTo(previous);
+    gray.copyTo(emptyBaseline);
+    rawGray.copyTo(rawBaseline);
 
     // Warpar en punkt från rå videokoordinat till 800x800-rummet.
     const warpPoint = (p: Point): Point => {
@@ -311,8 +317,7 @@ export const useDartDetector = (
       cv.threshold(diffPrev, threshPrev, 30, 255, cv.THRESH_BINARY);
       const movementNoise = cv.countNonZero(threshPrev);
 
-      previous.delete();
-      previous = gray.clone();
+      gray.copyTo(previous);
 
       const now = performance.now();
       let state = 'STABLE';
@@ -330,10 +335,8 @@ export const useDartDetector = (
           isStabilizing = false;
           state = 'ANALYZING';
           analyseNewBlob();
-          baseline.delete();
-          baseline = gray.clone();
-          rawBaseline.delete();
-          rawBaseline = rawGray.clone();
+          gray.copyTo(baseline);
+          rawGray.copyTo(rawBaseline);
         } else {
           state = 'STABILIZING';
         }
@@ -344,16 +347,14 @@ export const useDartDetector = (
         // identisk igen, och vi hunnit registrera minst en pil, så har någon
         // dragit ur pilarna -> spelarbyte. Baseline nollställs så nästa pil
         // syns som en ny skillnad.
-        if (dartsSinceClear > 0 && emptyBaseline) {
+        if (dartsSinceClear > 0) {
           cv.absdiff(gray, emptyBaseline, emptyDiff);
           cv.threshold(emptyDiff, emptyThresh, 30, 255, cv.THRESH_BINARY);
           if (cv.countNonZero(emptyThresh) < 400) {
             dartsSinceClear = 0;
             detectedDartsRef.current = [];
-            baseline.delete();
-            baseline = gray.clone();
-            rawBaseline.delete();
-            rawBaseline = rawGray.clone();
+            gray.copyTo(baseline);
+            rawGray.copyTo(rawBaseline);
             calmSince = 0;
             state = 'CLEARED';
             lastAnalysis = 'tavlan tömd → spelarbyte';
@@ -370,14 +371,9 @@ export const useDartDetector = (
         if (baselineNoise < 120 && movementNoise < 200) {
           if (calmSince === 0) calmSince = now;
           else if (now - calmSince > 15000) {
-            baseline.delete();
-            baseline = gray.clone();
-            rawBaseline.delete();
-            rawBaseline = rawGray.clone();
-            if (dartsSinceClear === 0) {
-              emptyBaseline.delete();
-              emptyBaseline = gray.clone();
-            }
+            gray.copyTo(baseline);
+            rawGray.copyTo(rawBaseline);
+            if (dartsSinceClear === 0) gray.copyTo(emptyBaseline);
             calmSince = now;
             if (debugRef.current) console.log('[det] baseline uppdaterad (drift)');
           }
@@ -436,10 +432,6 @@ export const useDartDetector = (
         rawGray, rawDiff, rawThresh, emptyDiff, emptyThresh,
         kernel, baseline, previous, rawBaseline, emptyBaseline,
       ].forEach((m) => m?.delete());
-      baseline = null;
-      previous = null;
-      emptyBaseline = null;
-      rawBaseline = null;
     };
   }, [cv, videoElement, transformMatrix, isActive, debugCanvasRef]);
 };
