@@ -99,6 +99,8 @@ export const useDartDetector = (
     let lastDebugEmit = 0;
     let lastEmittedState = '';
     let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
+    let grabDiag = ''; // diagnostiksträng från grabFrame
+    let frameCount = 0;
 
     const grabFrame = () => {
       // En NY canvas varje bildruta. En återanvänd canvas med
@@ -112,9 +114,19 @@ export const useDartDetector = (
       canvas.width = videoElement.videoWidth;
       canvas.height = videoElement.videoHeight;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) {
+        grabDiag = 'ctx=null';
+        return;
+      }
       ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
       const frame = cv.imread(canvas);
+      // Diagnostik: checksumma en bit av den råa bilden direkt efter drawImage,
+      // så vi ser om nya videobildrutor faktiskt når hit.
+      if (debugRef.current) {
+        let s = 0;
+        for (let i = 0; i < 4000 && i < frame.data.length; i += 4) s += frame.data[i];
+        grabDiag = `frame ${frame.cols}x${frame.rows} rSum=${s}`;
+      }
       cv.warpPerspective(frame, warped, transformMatrix, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, border);
       cv.cvtColor(warped, gray, cv.COLOR_RGBA2GRAY);
       // Sudda i GRÅSKALA, före tröskling. Den gamla koden suddade den binära
@@ -288,6 +300,7 @@ export const useDartDetector = (
 
       if (videoElement.paused || videoElement.ended || videoElement.videoWidth === 0) return;
 
+      frameCount++;
       grabFrame();
 
       cv.absdiff(gray, baseline, diff);
@@ -374,10 +387,23 @@ export const useDartDetector = (
       }
 
       if (debugRef.current && now - lastLogTime > 700) {
+        const dt = now - lastLogTime;
+        const fps = lastLogTime ? Math.round((frameCount / dt) * 1000) : 0;
+        frameCount = 0;
         lastLogTime = now;
+        // Checksumma en bit av gray + baseline: skiljer de sig ska baselineNoise
+        // vara > 0. Är gray konstant är grabFrame frusen.
+        let gs = 0;
+        let bs = 0;
+        for (let i = 200000; i < 210000 && i < gray.data.length; i++) gs += gray.data[i];
+        for (let i = 200000; baseline && i < 210000 && i < baseline.data.length; i++) bs += baseline.data[i];
+        // Rå diff (samma kedja som analyseNewBlob använder): ser råbilden pilen?
+        cv.absdiff(rawGray, rawBaseline, rawDiff);
+        cv.threshold(rawDiff, rawThresh, 15, 255, cv.THRESH_BINARY);
+        const rawNoise = cv.countNonZero(rawThresh);
         console.log(
-          `[det] ${state}  baselineNoise=${baselineNoise}  movementNoise=${movementNoise}` +
-            `  (motionTröskel=${motionThresholdRef.current}, baselineTröskel=500)` +
+          `[det] ${state}  baselineNoise=${baselineNoise}  movementNoise=${movementNoise}  rawNoise=${rawNoise}` +
+            `  fps≈${fps}  grayΣ=${gs} baselineΣ=${bs}  ${grabDiag}` +
             (lastAnalysis ? `  senaste: ${lastAnalysis}` : ''),
         );
       }
