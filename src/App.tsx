@@ -170,36 +170,46 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
-      {/* Header */}
+      {/* Header. Titeln visas bara efter kalibrering: under kalibreringen ligger
+          CalibrationOverlays eget knapprad (Auto-Kalibrera m.fl.) i exakt samma
+          hörn (top-3 left-3) och låg i samma z-lager som headern - texten och
+          knapparna åt varandra. */}
       <header className="absolute top-0 w-full z-20 p-3 sm:p-4 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex justify-between items-center gap-2 pointer-events-none">
-        <h1 className="text-base sm:text-xl font-bold tracking-tight text-white drop-shadow-md truncate min-w-0">
-          KPs DartApp
-        </h1>
+        {/* Vänster grupp som ett enda flex-barn, så statuspricken till höger inte
+            hoppar över till vänster (justify-between med bara ett barn hamnar
+            annars vid flex-start) när titeln och knapparna är dolda. */}
+        <div className="flex items-center gap-2 min-w-0">
+          {isCalibrated && (
+            <h1 className="text-base sm:text-xl font-bold tracking-tight text-white drop-shadow-md truncate min-w-0">
+              KPs DartApp
+            </h1>
+          )}
 
-        {isCalibrated && (
-          <div className="pointer-events-auto bg-slate-950/90 border border-slate-800 p-1 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => setViewMode('live')}
-              aria-label="Live-kamera"
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                viewMode === 'live' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Live</span>
-            </button>
-            <button
-              onClick={() => setViewMode('vision')}
-              aria-label="Vision 2D-vy"
-              className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                viewMode === 'vision' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Eye className="w-3.5 h-3.5 text-emerald-300" />
-              <span className="hidden sm:inline">Vision</span>
-            </button>
-          </div>
-        )}
+          {isCalibrated && (
+            <div className="pointer-events-auto bg-slate-950/90 border border-slate-800 p-1 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setViewMode('live')}
+                aria-label="Live-kamera"
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  viewMode === 'live' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Live</span>
+              </button>
+              <button
+                onClick={() => setViewMode('vision')}
+                aria-label="Vision 2D-vy"
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  viewMode === 'vision' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Eye className="w-3.5 h-3.5 text-emerald-300" />
+                <span className="hidden sm:inline">Vision</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center gap-2 shrink-0">
           {isLoaded ? (
