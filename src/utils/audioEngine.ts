@@ -102,11 +102,20 @@ class AudioEngine {
     this.vibrate([30, 50, 30, 50, 90]);
   }
 
-  /** Fri text via svensk TTS (t.ex. "Annas tur", "Kristian vinner!"). */
-  public speak(text: string) {
+  /**
+   * Fri text via svensk TTS (t.ex. "Annas tur", "Kristian vinner!").
+   *
+   * Köar som standard i stället för att avbryta pågående tal: en hel tur ska
+   * gå att läsa upp som en följd - varje pil, sedan summan, sedan ny
+   * ställning - utan att senare anrop klipper av tidigare. Web Speech API
+   * köar flera `speak()`-anrop naturligt så länge man inte kallar `cancel()`
+   * emellan. Sätt `cancel: true` när man medvetet vill avbryta kön (t.ex. en
+   * manuell rättning som gör tidigare uppläsning inaktuell).
+   */
+  public speak(text: string, opts: { cancel?: boolean } = {}) {
     if (!this.synth) return;
     try {
-      this.synth.cancel();
+      if (opts.cancel) this.synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'sv-SE';
       u.rate = 1.05;
@@ -119,13 +128,14 @@ class AudioEngine {
   }
 
   /**
-   * Speaks out the dart hit score using Swedish Text-to-Speech
+   * Speaks out the dart hit score using Swedish Text-to-Speech. Köar - se
+   * `speak()`.
    */
-  public speakScore(label: string, totalPoints: number) {
+  public speakScore(label: string, totalPoints: number, opts: { cancel?: boolean } = {}) {
     if (!this.synth) return;
 
     try {
-      this.synth.cancel(); // Stop previous speech
+      if (opts.cancel) this.synth.cancel();
 
       let text = `${totalPoints}`;
       if (label === 'DB') text = 'Dubbel Bull!';

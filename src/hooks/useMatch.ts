@@ -61,18 +61,20 @@ export function useMatch() {
   }, [bump]);
 
   const throwSeg = useCallback(
-    (seg: Seg) => {
-      if (!ref.current) return;
-      throwDart(ref.current, seg);
+    (seg: Seg): MatchState | null => {
+      if (!ref.current) return null;
+      const st = throwDart(ref.current, seg);
       bump();
+      return st;
     },
     [bump],
   );
 
-  const finishTurn = useCallback(() => {
-    if (!ref.current) return;
-    endTurn(ref.current);
+  const finishTurn = useCallback((): MatchState | null => {
+    if (!ref.current) return null;
+    const st = endTurn(ref.current);
     bump();
+    return st;
   }, [bump]);
 
   const undoLast = useCallback(() => {

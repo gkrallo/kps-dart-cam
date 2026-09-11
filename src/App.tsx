@@ -64,13 +64,29 @@ export default function App() {
 
   const handleDartDetected = useCallback((pt: Point) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
-    throwSeg(segFromDartScore(scoreObj));
+    const st = throwSeg(segFromDartScore(scoreObj));
 
     audioEngine.playDartHitSound();
     audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
 
     setLastScoredDartLabel(scoreObj.label);
     window.setTimeout(() => setLastScoredDartLabel(null), 2500);
+
+    // Farfar avslutar turen själv i motorn (ingen "Nästa"-knapp) - om just det
+    // här kastet nollställde currentDarts är turen redan slut, och lastEvent
+    // (satt av farfarEngine.throwDart) har allt vi behöver läsa upp: hur
+    // många poäng omgången gav och hur många pilar som sparades (eller
+    // "utslagen"). speak() köar efter speakScore ovan i stället för att
+    // klippa av den.
+    if (st && !engineFor(st.config).hasEndTurn && st.currentDarts.length === 0 && st.lastEvent) {
+      const ev = st.lastEvent;
+      const outcome = ev.type === 'ELIMINATED' ? 'Utslagen.' : `${ev.saved} sparade ${ev.saved === 1 ? 'pil' : 'pilar'}.`;
+      audioEngine.speak(`${ev.name}: ${ev.total} poäng. ${outcome}`);
+      if (!st.finished) {
+        const next = st.players[st.currentIndex];
+        if (next) audioEngine.speak(`${next.name}s tur`);
+      }
+    }
   }, [throwSeg]);
 
   const handleBoardCleared = useCallback(() => {
@@ -78,8 +94,17 @@ export default function App() {
     const st = matchState(match);
     const engine = engineFor(match.config);
     // 301/501: turen avslutas när tavlan töms. Farfar avslutar turen själv i
-    // motorn, så där räcker det att detektorn nollställts.
+    // motorn (se handleDartDetected), så här räcker det att detektorn
+    // nollställts.
     if (engine.hasEndTurn && !st.finished && st.currentDarts.length > 0) {
+      // Läs upp summan och nya ställningen INNAN finishTurn() nollställer
+      // currentDarts/flyttar currentIndex - st här är fortfarande "turen som
+      // precis avslutades". Vinst annonseras separat (useEffect på
+      // state.view.win) för att inte krocka med den fanfaren.
+      const v = st.view;
+      if (!v.win) {
+        audioEngine.speak(v.bust ? `${st.active.name}: tjock, poängen räknas inte.` : `${st.active.name}: ${v.total} poäng. ${v.remaining} kvar.`);
+      }
       finishTurn();
       audioEngine.playSwitchSound();
       const next = st.players[(st.currentIndex + 1) % st.players.length];
