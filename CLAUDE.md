@@ -277,15 +277,24 @@ tom igen?" är en enklare fråga som den klarar.
 är ärvda från AI Studio-POC:en utan känd härledning. Behandla dem som startvärden,
 inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 
+Sedan tabellen skrevs har vi verifierat mot riktig hårdvara (Kristians S25,
+sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
+[[dart-detection-status]]-minnet för fullständig historik.
+
 | Parameter | Värde | Var | Ursprung |
 |---|---|---|---|
 | `motionThreshold` | 3000 | `App.tsx` | Ärvd från POC. Reglerbar i UI:t. Antal skilda pixlar av 640 000 i den warpade bilden. Handhållen kamera överskrider den konstant, därför krävs stativ. |
-| Rörelsetröskel | 30 | `useDartDetector` | Ärvd. Gråvärdesskillnad för movement/baseline. |
-| Analyströkel | 15 | `useDartDetector` | Ärvd. Lägre för att fånga hela pilens form vid analys. |
-| `baselineNoise` | > 500 | `useDartDetector` | Ärvd. Gränsen för "något har tillkommit". |
+| Rörelsetröskel | 30 | `useDartDetector` | Ärvd. Gråvärdesskillnad för movement/baseline (warpad bild, `baselineNoise`/`movementNoise`). |
+| Analyströskel | 15 | `useDartDetector` | Ärvd. Gråvärdesskillnad i **rå** bild (`rawNoise`) - lägre för att fånga hela pilens form. |
+| `baselineNoise` | > 500 | `useDartDetector` | Ärvd. Gränsen för "något har tillkommit" som gör att STABILIZING→ANALYZING triggas. |
 | Stabiliseringstid | 500 ms | `useDartDetector` | Ärvd. Rimlig — en pil landar och står still. |
-| Konturarea | 100–15000 | `useDartDetector` | Ärvd. Godtyckliga tal i warpade pixlar. Borde vara relativa mått. |
-| `elongation` | ≥ 2.5 | `useDartDetector` | **Tillagd av oss**, resonerad inte mätt: en pil är avlång, en skugga är rund. Inte kalibrerad mot verkliga kast. |
+| Uppstartsspärr | 2000 ms | `useDartDetector` (`STARTUP_GRACE_MS`) | **Tillagd av oss**, uppmätt: användaren rör sig ofta fortfarande i bild direkt efter "Starta spel", och den skillnaden tolkades som en pil. |
+| Baseline-drift | 15 s helt orörd, `baselineNoise` < 120 & `movementNoise` < 200 | `useDartDetector` | **Justerad av oss** (från 4 s) - för snabb ätit en pil som ännu inte hunnit analyseras. |
+| Konturarea (rå bild) | 0,02–2,5 % av bildytan | `useDartDetector` (`minArea`/`maxArea`) | **Uppmätt av oss**: riktiga kast från stativet mätte 7 000–19 000 px i en 1080×1920-bild (≈0,3–1 %). maxArea sänkt från 5 % → 2,5 % sedan en arm vid pilhämtning (~80 000 px) annars räknades som pil. |
+| Konfidenstak (axelmetoden) | > 0,4 | `useDartDetector` (`detectDartAxisTip().confidence`) | **Uppmätt av oss** (höjd från 0,15): riktiga kast låg på 0,55–0,75 över tre testrundor, artefakter (armkant/skugga) på 0,20–0,23. Tomt gap däremellan. |
+| `elongation`, axelmetoden | 2–12 | `useDartDetector` (`MAX_ELONGATION`) | Nedre gräns (2) ärvd. Övre gräns (12) **tillagd av oss**, uppmätt: en spindeltråd/tavelkant/skuggrand mätte 24:1, riktiga kast 2,6–4,4. |
+| `elongation`, tyngdpunktsmetoden (frontal pil) | 2,5–5 | `useDartDetector` | **Satt av oss**, uppmätt: en frontal pil är en kompakt klump. Två artefakter på elong 9–11 slank igenom med det gamla taket 2,5–∞. |
+| Dubbeldetekterings-spärr | 1000 ms **och** 30 px (~13 mm) från senast registrerade pil | `useDartDetector` (`MIN_DART_SPACING_PX`) | **Tillagd av oss**: samma pil registrerades om medan den svängde in sig efter landning. |
 | Texturtröskel | stddev < 38 | `boardDetector` | Ärvd. Ska sålla bort släta ytor (väggar, tyg) vid tavledetektering. |
 | HoughCircles | dp=1, minDist=minRadius, param1=100, param2=30 | `boardDetector` | Ärvd. param2=30 är lågt och ger många falska cirklar. |
 | Radieintervall | 0.12–0.45 × min(bredd,höjd) | `boardDetector` | Ärvd (maxRadius höjd från 0.40). |
@@ -296,9 +305,11 @@ inte som resultat. Om du ändrar en, skriv i commit-meddelandet vad du mätte.
 | Ring-färgmask (HSV) | röd H<13 ∪ H>167, grön H 36–92, S≥55–70, V≥45–55 | `boardDetector` | **Satt av oss.** Tillåtande — bekräftat mot fotot i `realBoard.test.ts` att röd/grön-masken plockar ut ringarna även på en sliten tavla i skugga. Kan behöva justeras för din belysning. |
 | Ellipsval | fyrkantighet ≥ 0.55, centrum inom 0.42 × min(bild) | `boardDetector` | **Satt av oss.** Fotot visade att rödbrunt trädäck matchar "röd" bättre än den slitna ringen — "största konturen" låste på däcket. En ring är rund och nära bildmitten; däck och pilfenor är avlånga fläckar i kanten. |
 
-Verifierat exakt: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
+Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
 ellipsgeometrin, spetsdetekteringen och regelmotorn — 186 tester, delvis mot den syntetiska
-tavlan.
+tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
+absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
+normalzonen, med den återstående bull-precisionsfrågan ovan.
 
 ---
 
@@ -319,9 +330,17 @@ fortsätter köra hellre än kraschar — under ett dartspel är en tappad bildr
 bättre än en vit skärm. `try/finally` används genomgående där OpenCV-Mat:er
 allokeras.
 
-**OpenCV-minne.** Varje `new cv.Mat()`, `.clone()` och `.roi()` måste
-`.delete()`:as. WASM-heapen städas inte av garbage collectorn. Allokera utanför
-rAF-loopen och radera i effektens cleanup. Detta har läckt förut.
+**OpenCV-minne.** Varje `new cv.Mat()` och `.roi()` måste `.delete()`:as.
+WASM-heapen städas inte av garbage collectorn. Allokera utanför rAF-loopen och
+radera i effektens cleanup. Detta har läckt förut.
+
+**Använd aldrig `cv.Mat.prototype.clone()`.** I den här OpenCV.js-byggen
+(`@techstark/opencv-js`) delar `.clone()` databufferten med källan i stället
+för att kopiera — verifierat direkt på enheten. Det var i flera veckor
+orsaken till att *ingen* pil detekterades: referensbilderna i
+`useDartDetector` sattes med `baseline = gray.clone()`, blev alias för `gray`,
+och `absdiff` jämförde bilden med sig själv. Allokera målet en gång
+(`new cv.Mat()`) och uppdatera med `src.copyTo(dst)`, som kopierar på riktigt.
 
 **Tester.** All ren matematik ska ha test. `dartMath.test.ts` testar
 poänggeometrin; `pipeline.test.ts` kör hela kedjan genom en simulerad snedställd
@@ -416,17 +435,35 @@ hänsyn till.
 
 ## Vad som inte fungerar bra ännu
 
-Se `AGENT.md` för detaljer och planerad lösning. Kort:
+Se `AGENT.md` för detaljer och planerad lösning. Kort. (Uppdaterat sep 2026
+efter de första riktiga testomgångarna på Kristians tavla — se
+[[dart-detection-status]].)
 
-1. **Verklig verifiering saknas.** Geometrin (kalibrering, spetsdetektering,
-   poäng) är testad offline mot den syntetiska tavlan, men färgsegmenteringen —
-   ring­masken i `autoDetectBoardEllipse` och pilmasken i `useDartDetector` —
-   är inte prövad mot en riktig tavla i verklig belysning.
-2. **Uttagning av pilar** ger spökkast. `absdiff` är ett absolutbelopp och kan
-   inte skilja "något dök upp" från "något försvann".
+1. **Bull-precision.** Sektorträffar i normalzonen läses rätt efter
+   loupe-kalibreringen, men en pil i grön 25 nära en sektorgräns lästes som en
+   sektor nästan mitt emot. Sektorerna konvergerar vid centrum, så ett par mm
+   kalibreringsfel som är osynligt vid dubbelringen kan slå fel helt nära
+   bullen. En offline-simulering (perturberade kalibreringsklick genom
+   `homography.ts`/`syntheticBoard.ts`) bekräftar mönstret: redan ±2 px
+   klickfel ger felaktig 25/sektor-gräns, ±8 px kan flippa bull till fel
+   sektor helt. Ett extra viktat "peka ut bullens mitt"-korrespondenspar
+   hjälpte INTE konsekvent i simuleringen (kan göra outer-ring sämre om
+   bull-klicket har egen brus) - **prioritera i stället att prova
+   ellipsbaserad `autoDetectBoardEllipse` (redan `< 1,5 mm` radiellt fel i
+   `boardEllipse.test.ts`) i stället för fyra manuella klick**, den är
+   strukturellt mycket mer robust mot bullens precision eftersom den passar
+   en ellips mot hela ringen, inte fyra punkter.
+2. **Uttagning av pilar** ger fortfarande potentiellt spökkast om en enskild
+   pil dras ut och sätts tillbaka (bara hela-tavlan-tömd hanteras idag, se
+   `emptyBaseline`). Kristians idé: dra ut fel pil, håll handen ur bild ≥2 s,
+   sätt tillbaka - då kan appen läsa om just den positionen. Ospikat.
 3. **Sammanslagna pilar** blir en kontur och ger en spets.
 4. **Parallax** (mätt): en kamera räcker bara med spetsdetektering i råbilden
    (finns nu) eller två kameror. Ett kvarvarande fel på några mm är oundvikligt
    med en kamera när pilen lutar mycket.
+5. **`?debug`-instrumenteringen** i `useDartDetector.ts` (fps, gray/baseline-
+   checksummor, `grabDiag`) är kvar från felsökningen av clone()-buggen. Ta
+   bort när bull-precisionen är löst och inga fler djupdykningar behövs.
 
-Nästa planerade steg: tap-to-correct i Vision View.
+Nästa planerade steg: bull-precision (auto-kalibrera), tap-to-correct i
+Vision View, enskild pil-korrigering (dra ut/sätt tillbaka).

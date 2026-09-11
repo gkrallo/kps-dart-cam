@@ -119,29 +119,49 @@ ny mask mot föregående och isolera det tillkomna området.
 
 ## Att göra
 
-1. **Verifiera hela flödet på riktig tavla:** OpenCV-autodetekteringen,
-   pilmasken i verklig belysning, och spelflödet (pil-ljud, uppläsning,
-   automatiskt spelarbyte när tavlan töms). Trimma färgtrösklarna för Kristians
-   strålkastare.
-2. Tap-to-correct direkt i Vision View (nu finns bara `ThrowEditor` via
+1. ~~Verifiera hela flödet på riktig tavla~~ — **gjort sep 2026.** Detektering,
+   pilmask och spelflöde (pil-ljud, uppläsning, spelarbyte) fungerar live.
+   Kvarstående delfråga: **bull-precision** (se `dart-detection-status`-minnet
+   och CLAUDE.md:s parametertabell) — prova `autoDetectBoardEllipse` i stället
+   för fyra manuella klick, den bör ge en mycket säkrare centrumuppskattning.
+2. Enskild pil-korrigering: dra ut fel pil, håll handen ur bild ≥2 s, sätt
+   tillbaka på en tydlig plats — appen läser om just den positionen.
+   (Kristians idé, ospikat.) Bygger vidare på `emptyBaseline`-logiken men per
+   pil, inte hela tavlan.
+3. Tap-to-correct direkt i Vision View (nu finns bara `ThrowEditor` via
    pilrutorna i panelen). Ger även märkt data för framtida ML.
-3. Rätta kast **flera turer bakåt** (motorn stödjer det, `removeThrow` /
+4. Rätta kast **flera turer bakåt** (motorn stödjer det, `removeThrow` /
    `replaceThrow`; UI:t rättar bara aktuell tur).
-4. Hantering av felaktig tavla-tömd-detektering (hand kvar i bild, dålig ljus).
-5. Låt warpen i `App.tsx` gå genom `computeCalibration` (N grovt utpekade
+5. Hantering av felaktig tavla-tömd-detektering (hand kvar i bild, dålig ljus).
+6. Låt warpen i `App.tsx` gå genom `computeCalibration` (N grovt utpekade
    punkter) i stället för `cv.getPerspectiveTransform` på exakt fyra.
-6. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas).
-7. Lokal ML (DeepDarts-liknande keypoint-modell).
+7. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas).
+8. Lokal ML (DeepDarts-liknande keypoint-modell).
+9. Turordning: om en pil missas men nästa läses hamnar kasten fel i listan.
+   Spelar roll för Farfar och 301/501-utgång. Ospikat hur det ska upptäckas
+   eller rättas.
 
 Klart och verifierat offline: homografilösaren, ellipskalibreringen,
 spetsdetekteringen, parallaxmätningen, rotationsankaret, sparad kalibrering,
 **regelmotorn (301/501/Farfar) + rättning**. Parallax: en kamera räcker bara med
-spetsdetektering i råbilden eller två kameror.
+spetsdetektering i råbilden eller två kameror. Klart och verifierat på riktig
+hårdvara: hela detekteringskedjan, pil-ljud, uppläsning per pil **och per
+avslutad tur** (summa + ny ställning, se `audioEngine.speak`), automatiskt
+spelarbyte.
 
 ## Fallgropar
 
-- **OpenCV.js Mat:er städas inte av garbage collectorn.** Varje `new cv.Mat()`,
-  `.clone()` och `.roi()` måste `.delete()`:as. Allokera utanför rAF-loopen.
+- **`cv.Mat.prototype.clone()` delar databufferten med källan i den här
+  OpenCV.js-byggen (`@techstark/opencv-js`) — kopierar INTE.** Detta var
+  orsaken till att ingen pil detekterades alls i flera veckor: referensbilderna
+  i `useDartDetector` sattes med `baseline = gray.clone()`, som bara blev ett
+  alias för `gray`, så `absdiff` jämförde bilden med sig själv och gav alltid
+  0. Verifierat direkt på enheten (`a.setTo(99)` ändrade även en tidigare
+  tagen `b = a.clone()`, samma `byteOffset`). **Använd aldrig `.clone()` här —
+  allokera målet en gång (`new cv.Mat()`) och uppdatera med `src.copyTo(dst)`,
+  som kopierar på riktigt.**
+- **OpenCV.js Mat:er städas inte av garbage collectorn.** Varje `new cv.Mat()`
+  och `.roi()` måste `.delete()`:as. Allokera utanför rAF-loopen.
 - **Callbacks från React i refs**, inte i effektens dependencies — annars byggs
   detektorn om vid varje kast.
 - **Aldrig både hårdvaruzoom och CSS-transform.** Det gav dubbel zoom och en
