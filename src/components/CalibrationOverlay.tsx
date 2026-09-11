@@ -13,7 +13,7 @@ import {
   saveCalibration,
 } from '../utils/calibration';
 import type { ZoomCapability } from './CameraFeed';
-import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair } from 'lucide-react';
+import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward } from 'lucide-react';
 
 interface CalibrationOverlayProps {
   containerWidth: number;
@@ -47,6 +47,17 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [showDpad, setShowDpad] = useState<boolean>(false);
   const [anchorMode, setAnchorMode] = useState<boolean>(false);
 
+  // "Sikte"-steget körs bara före punktplacering. Telefonen sitter fast på
+  // stativ, så appen kan inte rikta om sig själv - det användaren GÖR är att
+  // fysiskt flytta stativet tills tavlan ligger i hårkorset. Det appen kan
+  // göra är att välja en bra zoomnivå automatiskt när den ser tavlan, i
+  // stället för att användaren ska gissa sig fram med reglaget. Hoppas över
+  // (går direkt till punktplacering) om en sparad kalibrering finns, så
+  // återkommande användare inte tvingas igenom steget varje gång.
+  const [calibrationStep, setCalibrationStep] = useState<'sikte' | 'punkter'>('sikte');
+  const [isZoomingToBoard, setIsZoomingToBoard] = useState(false);
+  const [siktStatus, setSiktStatus] = useState<string | null>(null);
+
   // Initialize points only once when dimensions are available. Om en kalibrering
   // finns sparad sedan tidigare återställs den - annars en centrerad ring.
   useEffect(() => {
@@ -70,11 +81,81 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       setPoints(initialPoints);
       onPointsChange(initialPoints);
       if (restored) {
+        setCalibrationStep('punkter');
         setDetectStatus('Sparad kalibrering återställd. Justera vid behov.');
         window.setTimeout(() => setDetectStatus(null), 5000);
       }
     }
   }, [containerWidth, containerHeight]);
+
+  // Delad detekteringslogik: ellipsmetoden klarar sneda kameravinklar;
+  // HoughCircles (cirkel-antagande) är fallback om färgsegmenteringen inte
+  // hittar ringarna. Används av både "Auto-Kalibrera" och sikte-steget.
+  const runBoardDetection = (): Point[] | null => {
+    if (!videoElement || !cv) return null;
+    return (
+      autoDetectBoardEllipse(cv, videoElement, containerWidth, containerHeight) ??
+      autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight)
+    );
+  };
+
+  // Sikta-steget: hitta tavlan vid nuvarande zoom, räkna ut vilken zoomnivå
+  // som fyller ramen lagom mycket, applicera hårdvaruzoomen, och detektera om
+  // en gång till när bilden hunnit stabilisera sig - den andra detekteringen
+  // blir träffsäkrare eftersom tavlan nu fyller mer av bilden.
+  const handleAutoZoomToBoard = () => {
+    if (!videoElement || !cv) {
+      setSiktStatus('Kameran eller datorseendet är inte redo ännu.');
+      window.setTimeout(() => setSiktStatus(null), 4000);
+      return;
+    }
+
+    setIsZoomingToBoard(true);
+    setSiktStatus('Letar efter tavlan...');
+
+    requestAnimationFrame(() => {
+      const rough = runBoardDetection();
+      if (!rough) {
+        setSiktStatus('Hittade ingen tavla än. Håll stativet stilla med tavlan i bild, eller hoppa över och placera punkterna manuellt.');
+        setIsZoomingToBoard(false);
+        window.setTimeout(() => setSiktStatus(null), 6000);
+        return;
+      }
+
+      if (!onZoomChange || !zoomCapability?.supported) {
+        // Ingen hårdvaruzoom på den här telefonen - använd träffen direkt.
+        setPoints(rough);
+        onPointsChange(rough);
+        setCalibrationStep('punkter');
+        setIsZoomingToBoard(false);
+        return;
+      }
+
+      const cx = rough.reduce((s, p) => s + p.x, 0) / rough.length;
+      const cy = rough.reduce((s, p) => s + p.y, 0) / rough.length;
+      const avgR = rough.reduce((s, p) => s + Math.hypot(p.x - cx, p.y - cy), 0) / rough.length;
+      // Målet: dubbelringens ytterkant ska nå ~40% av kortsidan - samma
+      // storlek som "Återställ"-cirkeln (0.36-0.4) håller sig till, så
+      // punkterna hamnar inom bekväma dragavstånd även efter zoomen.
+      const targetR = Math.min(containerWidth, containerHeight) * 0.4;
+      const factor = avgR > 0 ? targetR / avgR : 1;
+      const target = Math.min(zoomCapability.max, Math.max(zoomCapability.min, zoomLevel * factor));
+
+      setSiktStatus('Zoomar in mot tavlan...');
+      onZoomChange(target);
+
+      // Kamerans hårdvaruzoom (och autoexponering som ställer om sig efter
+      // den) tar en liten stund - vänta innan vi litar på nästa bildruta.
+      window.setTimeout(() => {
+        const refined = runBoardDetection() ?? rough;
+        setPoints(refined);
+        onPointsChange(refined);
+        setCalibrationStep('punkter');
+        setIsZoomingToBoard(false);
+        setSiktStatus(null);
+      }, 700);
+    });
+  };
 
   const handlePointerDown = (idx: number, e: React.PointerEvent) => {
     if (anchorMode) return; // i utpekningsläge ska trycket rotera, inte dra
@@ -151,11 +232,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     // requestAnimationFrame så att skann-overlayen hinner ritas ut innan
     // OpenCV blockerar huvudtråden.
     requestAnimationFrame(() => {
-      // Ellipsmetoden klarar sneda kameravinklar; HoughCircles (cirkel-antagande)
-      // är fallback om färgsegmenteringen inte hittar ringarna.
-      const detected =
-        autoDetectBoardEllipse(cv, videoElement, containerWidth, containerHeight) ??
-        autoDetectBoardOpenCV(cv, videoElement, containerWidth, containerHeight);
+      const detected = runBoardDetection();
 
       if (detected) {
         setPoints(detected);
@@ -281,6 +358,112 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     left = Math.max(margin, Math.min(left, containerWidth - LOUPE - margin));
     return { left, top };
   })();
+
+  // Sikte-steget: bara ett hårkors mitt i bild + zoomkontroller. Inga
+  // dragbara punkter än - de kommer i nästa steg, antingen från
+  // "Zooma till tavlan" eller från "Hoppa över" (då startar de som en
+  // centrerad cirkel, precis som innan sikte-steget fanns).
+  if (calibrationStep === 'sikte') {
+    return (
+      <div className="absolute inset-0 w-full h-full pointer-events-none z-10 flex flex-col justify-between overflow-hidden">
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          <g className="opacity-90">
+            <circle
+              cx={containerWidth / 2}
+              cy={containerHeight / 2}
+              r={28}
+              fill="none"
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+            />
+            <circle cx={containerWidth / 2} cy={containerHeight / 2} r={4} fill="#f59e0b" />
+            <line
+              x1={containerWidth / 2 - 46}
+              y1={containerHeight / 2}
+              x2={containerWidth / 2 - 34}
+              y2={containerHeight / 2}
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+            />
+            <line
+              x1={containerWidth / 2 + 34}
+              y1={containerHeight / 2}
+              x2={containerWidth / 2 + 46}
+              y2={containerHeight / 2}
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+            />
+            <line
+              x1={containerWidth / 2}
+              y1={containerHeight / 2 - 46}
+              x2={containerWidth / 2}
+              y2={containerHeight / 2 - 34}
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+            />
+            <line
+              x1={containerWidth / 2}
+              y1={containerHeight / 2 + 34}
+              x2={containerWidth / 2}
+              y2={containerHeight / 2 + 46}
+              stroke="#f59e0b"
+              strokeWidth="2.5"
+            />
+          </g>
+        </svg>
+
+        <div className="absolute top-3 left-3 right-3 pointer-events-auto flex flex-col items-center gap-2 z-20">
+          <div className="bg-slate-950/90 border border-amber-500/40 px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md text-center max-w-sm">
+            <div className="text-amber-400 font-bold text-xs uppercase tracking-wider mb-1">Sikta in tavlan</div>
+            <p className="text-slate-300 text-[11px] leading-snug">
+              Flytta eller vinkla stativet tills bullseye ligger i hårkorset. Tryck sedan
+              "Zooma till tavlan" - appen hittar tavlan och väljer en lagom zoomnivå åt dig.
+            </p>
+          </div>
+
+          {onZoomChange && zoomCapability?.supported && (
+            <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-xl">
+              <ZoomIn className="w-3.5 h-3.5 text-blue-400" />
+              <input
+                type="range"
+                min={zoomCapability.min}
+                max={zoomCapability.max}
+                step={zoomCapability.step}
+                value={zoomLevel}
+                onChange={(e) => onZoomChange(Number(e.target.value))}
+                className="w-32 sm:w-48 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              />
+              <span className="font-mono text-blue-400 font-bold text-xs">{zoomLevel.toFixed(1)}x</span>
+            </div>
+          )}
+
+          {siktStatus && (
+            <span className="text-[11px] leading-snug text-amber-300 font-semibold bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-amber-500/40 shadow-lg text-center max-w-sm">
+              {siktStatus}
+            </span>
+          )}
+        </div>
+
+        <div className="absolute bottom-3 left-3 right-3 pointer-events-auto flex items-center justify-center gap-2 z-20">
+          <button
+            onClick={handleAutoZoomToBoard}
+            disabled={isZoomingToBoard}
+            className="bg-amber-500 hover:bg-amber-400 active:scale-95 disabled:opacity-50 text-slate-950 px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-xl shadow-amber-500/20 backdrop-blur-md border border-amber-400/50 transition-all"
+          >
+            <Target className="w-4 h-4" />
+            <span>{isZoomingToBoard ? 'Zoomar...' : 'Zooma till tavlan'}</span>
+          </button>
+          <button
+            onClick={() => setCalibrationStep('punkter')}
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-300 active:scale-95 px-3 py-2.5 rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-1.5 border border-slate-700/80 shadow-lg backdrop-blur-md transition-all"
+          >
+            <SkipForward className="w-4 h-4" />
+            <span>Hoppa över</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Calculate 3D projective wireframe using Homography
   const project = computeHomography(points);
@@ -491,6 +674,15 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           >
             <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
             <span className="hidden sm:inline">Återställ</span>
+          </button>
+
+          <button
+            onClick={() => setCalibrationStep('sikte')}
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-300 active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border border-slate-700/80 shadow-lg backdrop-blur-md transition-all"
+            title="Tillbaka till sikte- och zoomsteget"
+          >
+            <Target className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Sikte</span>
           </button>
 
           {detectStatus && (
