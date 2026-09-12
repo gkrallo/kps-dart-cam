@@ -738,7 +738,11 @@ export const useDartDetector = (
     const syncSnapshots = () => {
       while (snapshots.length > rawTips.length + 1) popSnapshot();
       while (snapshots.length < rawTips.length + 1) pushSnapshot();
-      absorbIntoTop();
+      // Nivå 0 är den TOMMA tavlan, och den är avstämningens enda fasta
+      // referens. Skriv aldrig över den med en bildruta som kan innehålla en
+      // hand eller en pil som inte känts igen - då skulle avstämningen tappa
+      // sitt facit för resten av omgången.
+      if (snapshots.length > 1) absorbIntoTop();
     };
 
     /**
