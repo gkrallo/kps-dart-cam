@@ -91,6 +91,7 @@ src/
     CameraFeed.tsx            getUserMedia, videoelement, hårdvaruzoom
     CalibrationOverlay.tsx    SVG-överlägg med 4 dragbara punkter + wireframe
     GameSetup.tsx             Välj spelläge (301/501/Farfar) + spelare
+    ResumeCard.tsx            Uppstart: fortsätt sparad match, eller börja om
     Scoreboard.tsx            Spelpanel (aktiv spelare, poäng, tur), detektorstatus
     ThrowEditor.tsx           Knappsats för att rätta en avläst pil
     TurnHistory.tsx           Turer bakåt: rätta, ta bort, lägga till missad pil
@@ -141,7 +142,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 284 tester
+npm test         # 290 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -315,10 +316,20 @@ svarar "osäker" - se punkt 5 under "Vad som inte fungerar bra ännu".
 
 **Tavla-tömd → spelarbyte.** En långlivad referensbild (`emptyBaseline`, den
 tomma tavlan vid speluppstart) används som säkerhetsnät: när en stabil bildruta
-är nästan identisk med den igen, och minst en pil hunnit registreras, tvingas
-en total återställning fram oavsett vad den stegvisa uttagningslogiken (nedan)
-kom fram till under vägs. För 301/501 avslutas turen (`endTurn`), en ton spelas
-och nästa spelares namn läses upp. Farfar avslutar turen själv i motorn.
+är nästan identisk med den igen tvingas en total återställning fram oavsett vad
+den stegvisa uttagningslogiken (nedan) kom fram till under vägs. För 301/501
+avslutas turen (`endTurn`), en ton spelas och nästa spelares namn läses upp.
+Farfar avslutar turen själv i motorn.
+
+Villkoret är **inte** bara "minst en pil registrerad". Kastar någon tre pilar
+som ingen av dem känns igen hände det förut ingenting alls - inte ens när
+pilarna drogs ut - och appen stod kvar på samma spelare tills någon tryckte
+"Nästa". Nu räcker det också att något HAR suttit i tavlan i minst
+`MATERIAL_HOLD_MS` (3 s): då har en tur ägt rum, oavsett om avläsningen fångade
+den. Uthållighetskravet finns för att en hand som sträcker sig in efter pilarna
+inte ska räknas som en spelad tur. För Farfar går turen ändå inte att avsluta -
+antalet pilar ÄR spelet, och `farfarEngine.endTurn` vägrar - så där blir det i
+stället en varning om att fylla i pilarna via Turer.
 
 **Omvänd uttagning avslöjar dolda pilar (tillagt 2026-09-11).** `useDartDetector`
 håller en STACK av rå-bilder (`snapshots`), en nivå per pil som registrerats
@@ -397,10 +408,40 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 284 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 290 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
+
+---
+
+## Spelflödet och uppstarten
+
+**Under spelets gång ska ingenting kräva att man går fram till telefonen.** Det
+är inte bara bekvämlighet: varje tryck är en chans att knuffa stativet, och då
+är kalibreringen borta. Därför:
+
+- Turen avslutas av sig själv när tavlan töms, i BÅDA spellägena. "Avsluta tur"
+  i `Scoreboard` är en nödutgång och visas först när appen väntat på uttagning i
+  över 35 sekunder, eller när färre pilar än väntat lästes av. Låg den framme
+  hela tiden (stor och blå, med texten "Nästa") läste den som ett obligatoriskt
+  steg - det var därför Kristian trodde att 301/501 krävde ett tryck.
+- En **statusrad** högst upp i panelen säger i klartext vad appen väntar på
+  ("Kasta, Anders" / "Dra ut pilarna"). Spelaren står vid kastlinjen och ser
+  inga små siffror, och tystnad går annars inte att skilja från ett fel.
+- Allt viktigt läses också upp (`audioEngine`).
+
+**Uppstarten frågar innan den återupptar.** Matchen sparas i localStorage med
+ett kuvert som bär `at` (senast ändrad) - matchen själv är event-sourcad och har
+med flit inga tidsstämplar per kast. Är den sparade matchen färskare än
+`AUTO_RESUME_MS` (2 min) återupptas den tyst, för då handlar det om en
+omladdning eller en skärmsläckare mitt i spelet. Är den äldre visas `ResumeCard`
+med ställningen och två val. Förut återupptogs den tyst oavsett ålder, så man
+kom rakt in i gårdagens match och första pilen hamnade på fel spelares poäng.
+En avgjord match återupptas aldrig - den erbjuder "Spela igen, samma spelare".
+
+Detektorn är avstängd så länge uppstartskortet eller spelinställningarna ligger
+över, annars hamnar pilar i fel match.
 
 ---
 

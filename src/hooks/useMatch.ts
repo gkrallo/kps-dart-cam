@@ -16,20 +16,49 @@ import type { Match, MatchState, Seg } from '../game/types';
 
 const KEY = 'kps-dart-cam:match:v1';
 
-function load(): Match | null {
+/**
+ * Sparformatet har en kuvertnivå sedan 2026-09-12: matchen själv är
+ * event-sourcad och har ingen tidsstämpel per kast (med flit - kastlistan ska
+ * vara kompakt), men uppstartsflödet behöver veta hur GAMMAL den sparade
+ * matchen är för att kunna avgöra om den ska återupptas tyst eller med en
+ * fråga. Äldre sparningar utan kuvert läses fortfarande.
+ */
+interface Envelope {
+  v: 2;
+  /** ISO-tid för senaste ändringen. */
+  at: string;
+  match: ReturnType<typeof serializeMatch>;
+}
+
+function load(): { match: Match | null; lastPlayedAt: number | null } {
   try {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(KEY) : null;
-    return raw ? restoreMatch(JSON.parse(raw)) : null;
+    if (!raw) return { match: null, lastPlayedAt: null };
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.v === 2) {
+      const env = parsed as Envelope;
+      const at = Date.parse(env.at);
+      return {
+        match: restoreMatch(env.match),
+        lastPlayedAt: Number.isFinite(at) ? at : null,
+      };
+    }
+    // Gammalt format: matchen rakt av, ingen tid känd.
+    return { match: restoreMatch(parsed), lastPlayedAt: null };
   } catch {
-    return null;
+    return { match: null, lastPlayedAt: null };
   }
 }
 
 function save(match: Match | null): void {
   try {
     if (typeof localStorage === 'undefined') return;
-    if (match) localStorage.setItem(KEY, JSON.stringify(serializeMatch(match)));
-    else localStorage.removeItem(KEY);
+    if (!match) {
+      localStorage.removeItem(KEY);
+      return;
+    }
+    const env: Envelope = { v: 2, at: new Date().toISOString(), match: serializeMatch(match) };
+    localStorage.setItem(KEY, JSON.stringify(env));
   } catch {
     /* privat surfning m.m. */
   }
@@ -41,10 +70,14 @@ function save(match: Match | null): void {
  * listredigeringar och en omräkning.
  */
 export function useMatch() {
-  const ref = useRef<Match | null>(load());
+  const initial = useRef(load()).current;
+  const ref = useRef<Match | null>(initial.match);
+  /** Millisekunder sedan epoch för senaste ändringen av den SPARADE matchen. */
+  const lastPlayedAtRef = useRef<number | null>(initial.lastPlayedAt);
   const [, force] = useState(0);
   const bump = useCallback(() => {
     save(ref.current);
+    lastPlayedAtRef.current = ref.current ? Date.now() : null;
     force((n) => n + 1);
   }, []);
 
@@ -114,5 +147,17 @@ export function useMatch() {
   const match = ref.current;
   const state: MatchState | null = match ? matchState(match) : null;
 
-  return { match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow };
+  return {
+    match,
+    state,
+    lastPlayedAt: lastPlayedAtRef.current,
+    start,
+    quit,
+    throwSeg,
+    finishTurn,
+    undoLast,
+    editThrow,
+    deleteThrow,
+    insertMissingThrow,
+  };
 }

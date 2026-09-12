@@ -9,6 +9,10 @@ interface ScoreboardProps {
   hasEndTurn: boolean;
   onUndo: () => void;
   onFinishTurn: () => void;
+  /** Vad appen väntar på just nu, i klartext. Se `turnPrompt` i App.tsx. */
+  prompt?: { text: string; waiting: boolean };
+  /** Visa den manuella "Avsluta tur"-knappen. Normalt behövs den inte. */
+  showManualNext?: boolean;
   onEditThrow: (actionIndex: number, seg: Seg) => void;
   onDeleteThrow: (actionIndex: number) => void;
   onNewGame: () => void;
@@ -32,6 +36,8 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   hasEndTurn,
   onUndo,
   onFinishTurn,
+  prompt,
+  showManualNext = false,
   onEditThrow,
   onDeleteThrow,
   onNewGame,
@@ -73,6 +79,23 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
           }}
           onClose={() => setEditIdx(null)}
         />
+      )}
+
+      {/* Vad appen väntar på. Står först och stort med flit: spelaren läser
+          den tvärs över rummet och ska slippa gå fram till telefonen för att
+          förstå varför ingenting händer. */}
+      {prompt && (
+        <div
+          className={`flex items-center justify-center gap-2 rounded-2xl px-3 py-2 border text-center ${
+            prompt.waiting
+              ? 'bg-amber-950/50 border-amber-800/50 text-amber-300'
+              : 'bg-blue-950/50 border-blue-800/50 text-blue-200'
+          }`}
+        >
+          <span className="text-base sm:text-lg font-black tracking-tight leading-tight">
+            {prompt.text}
+          </span>
+        </div>
       )}
 
       {/* Top row: active player + score */}
@@ -157,16 +180,22 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
             <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
             <span>Ångra</span>
           </button>
-          {hasEndTurn && !match.finished ? (
+          {/* "Avsluta tur" är en NÖDUTGÅNG, inte en del av det normala
+              varvet - turen avslutas av sig själv när tavlan töms. Låg den
+              framme hela tiden, stor och blå, läste den som ett steg man
+              måste ta, och då trycker man på skärmen i onödan. Den dyker upp
+              först när något faktiskt hängt sig. */}
+          {hasEndTurn && !match.finished && showManualNext && (
             <button
               onClick={onFinishTurn}
-              className="flex items-center justify-center gap-1.5 bg-blue-700 hover:bg-blue-600 active:scale-95 text-white px-3 py-2 rounded-xl text-xs font-bold border border-blue-500/50"
-              title="Avsluta turen manuellt (annars sker det när tavlan töms)"
+              className="flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 px-3 py-2 rounded-xl text-xs font-bold border border-slate-700"
+              title="Avsluta turen manuellt. Normalt sker det av sig självt när tavlan töms."
             >
-              <SkipForward className="w-3.5 h-3.5" />
-              <span>Nästa</span>
+              <SkipForward className="w-3.5 h-3.5 text-slate-400" />
+              <span>Avsluta tur</span>
             </button>
-          ) : (
+          )}
+          {(!hasEndTurn || match.finished) && (
             <button
               onClick={onNewGame}
               className="flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold border border-slate-700"

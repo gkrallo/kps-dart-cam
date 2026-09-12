@@ -261,6 +261,9 @@ export const useDartDetector = (
     let lastDebugEmit = 0;
     let lastEmittedState = '';
     let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
+    /** När något först syntes i tavlan sedan den senast var tom. 0 = tomt nu. */
+    let materialSince = 0;
+    let lastEmptyCheck = 0;
     let grabDiag = ''; // diagnostiksträng från grabFrame
     let lastDiag = ''; // siffrorna bakom senaste blobbeslutet (?debug)
     let frameCount = 0;
@@ -304,7 +307,24 @@ export const useDartDetector = (
     // och när scenen lugnar sig tolkas skillnaden som en pil. Ignorera all
     // avkänning de första 2 s.
     const startedAt = performance.now();
-    const STARTUP_GRACE_MS = 2000;
+    /**
+ * Skilda pixlar (av 640 000 i den warpade bilden) mot den tomma tavlan som
+ * räknas som "något sitter i tavlan". CLEAR_PX är motsvarande gräns för
+ * "tavlan är tom igen" och är den som fanns sedan tidigare.
+ *
+ * GISSADE värden, inte uppmätta: 400 är ärvt, och 2000 är valt för att ligga
+ * tydligt över det men långt under en enda pil (råblobbar mätte 7 000-19 000 px
+ * i en 1080x1920-bild, och warpen ändrar skalan bara marginellt). Mät om dem
+ * när det finns loggar från riktiga kast.
+ */
+const CLEAR_PX = 400;
+const MATERIAL_PX = 2000;
+/** Så länge måste något ha suttit i tavlan för att räknas som en spelad tur. */
+const MATERIAL_HOLD_MS = 3000;
+/** Hur ofta kollen mot tom tavla görs. En uttagning är långsam; 5 Hz räcker. */
+const EMPTY_CHECK_INTERVAL_MS = 200;
+
+const STARTUP_GRACE_MS = 2000;
 
     const grabFrame = () => {
       // En NY canvas varje bildruta. En återanvänd canvas med
@@ -1024,24 +1044,46 @@ export const useDartDetector = (
         isStabilizing = false;
 
         // Tavlan tömd? Jämför mot den tomma referensbilden. Är den nästan
-        // identisk igen, och vi hunnit registrera minst en pil, så har någon
-        // dragit ur pilarna -> spelarbyte. Säkerhetsnät oavsett vad den
-        // stegvisa uttagningslogiken i analyseChange() kom fram till (se
-        // kommentaren vid `snapshots`): tvingar alltid en total återställning
-        // när tavlan verkligen är tom.
-        if (dartsThisCycle > 0) {
+        // identisk igen har någon dragit ur pilarna -> spelarbyte.
+        // Säkerhetsnät oavsett vad den stegvisa uttagningslogiken i
+        // analyseChange() kom fram till (se kommentaren vid `snapshots`):
+        // tvingar alltid en total återställning när tavlan verkligen är tom.
+        //
+        // Villkoret är INTE bara "minst en pil registrerad". Kastar någon tre
+        // pilar som ingen av dem känns igen händer annars ingenting alls -
+        // inte ens när pilarna dras ut - och appen står kvar på samma spelare
+        // tills någon trycker "Nästa". Därför räcker det också att det HAR
+        // suttit något i tavlan en stund: då har en tur ägt rum, oavsett om
+        // avläsningen fångade den.
+        if (now - lastEmptyCheck > EMPTY_CHECK_INTERVAL_MS) {
+          lastEmptyCheck = now;
           cv.absdiff(gray, emptyBaseline, emptyDiff);
           cv.threshold(emptyDiff, emptyThresh, 30, 255, cv.THRESH_BINARY);
-          if (cv.countNonZero(emptyThresh) < 400) {
-            detectedDartsRef.current = [];
-            rawTips = [];
-            lastEmptyDiffPx = -1;
-            resetSnapshots();
-            gray.copyTo(baseline);
-            calmSince = 0;
-            state = 'CLEARED';
-            lastAnalysis = 'tavlan tömd → spelarbyte';
-            onBoardClearedRef.current?.();
+          const emptyPx = cv.countNonZero(emptyThresh);
+
+          if (emptyPx >= MATERIAL_PX) {
+            if (materialSince === 0) materialSince = now;
+          } else if (emptyPx < CLEAR_PX) {
+            const heldMs = materialSince === 0 ? 0 : now - materialSince;
+            // Kravet på uthållighet finns för att en hand som sträcker sig in
+            // efter pilarna inte ska räknas som "en tur har spelats". En pil
+            // sitter kvar tills den dras ut, en hand passerar.
+            const somethingWasThere = dartsThisCycle > 0 || heldMs >= MATERIAL_HOLD_MS;
+            materialSince = 0;
+            if (somethingWasThere) {
+              detectedDartsRef.current = [];
+              rawTips = [];
+              lastEmptyDiffPx = -1;
+              resetSnapshots();
+              gray.copyTo(baseline);
+              calmSince = 0;
+              state = 'CLEARED';
+              lastAnalysis =
+                dartsThisCycle > 0
+                  ? 'tavlan tömd → spelarbyte'
+                  : `tavlan tömd utan avläst pil (${(heldMs / 1000).toFixed(0)} s) → spelarbyte`;
+              onBoardClearedRef.current?.();
+            }
           }
         }
 

@@ -6,6 +6,7 @@ import { Scoreboard } from '../Scoreboard';
 import { ThrowEditor } from '../ThrowEditor';
 import { TurnHistory } from '../TurnHistory';
 import { HelpPanel } from '../HelpPanel';
+import { ResumeCard } from '../ResumeCard';
 import { createMatch, matchState, throwDart, endTurn } from '../../game/match';
 
 /**
@@ -170,5 +171,107 @@ describe('spelvyer renderar utan att krascha', () => {
       }),
     );
     expect(html).toContain('Inga kast ännu');
+  });
+});
+
+describe('ResumeCard', () => {
+  const built = (mode: 'FARFAR' | '501') => {
+    const m = createMatch({ mode, players: [{ name: 'Kristian' }, { name: 'Anders' }] });
+    throwDart(m, { v: 20, m: 3 });
+    return matchState(m);
+  };
+
+  it('visar ställningen och vem som står på tur', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResumeCard, {
+        state: built('501'),
+        lastPlayedAt: Date.now() - 12 * 60 * 1000,
+        onResume: noop,
+        onNewGame: noop,
+      }),
+    );
+    expect(html).toContain('Fortsätt matchen?');
+    expect(html).toContain('Kristian');
+    expect(html).toContain('Anders');
+    expect(html).toContain('står på tur');
+    expect(html).toContain('för 12 minuter sedan');
+  });
+
+  it('Farfar visar sparade pilar i stället för poäng kvar', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResumeCard, {
+        state: built('FARFAR'),
+        lastPlayedAt: Date.now() - 5000,
+        onResume: noop,
+        onNewGame: noop,
+      }),
+    );
+    expect(html).toContain('sparade');
+    expect(html).toContain('Runda');
+  });
+
+  it('en avgjord match erbjuder inte "Fortsätt"', () => {
+    const m = createMatch({ mode: '501', players: [{ name: 'Kristian' }] });
+    // Att spela ner 501 till noll här skulle bara göra testet långt; kortet
+    // bryr sig bara om flaggan.
+    const st = { ...matchState(m), finished: true, winners: ['Kristian'] };
+    const html = renderToStaticMarkup(
+      createElement(ResumeCard, {
+        state: st,
+        lastPlayedAt: Date.now(),
+        onResume: noop,
+        onNewGame: noop,
+        onPlayAgain: noop,
+      }),
+    );
+    expect(html).toContain('Matchen är slut');
+    expect(html).toContain('Spela igen');
+    expect(html).not.toContain('>Fortsätt<');
+  });
+});
+
+describe('Scoreboard: statusrad och nödutgång', () => {
+  const scoreboardProps = (extra: Record<string, unknown>) => {
+    const m = createMatch({ mode: '501', players: [{ name: 'Kristian' }, { name: 'Anders' }] });
+    throwDart(m, { v: 20, m: 1 });
+    return {
+      match: matchState(m),
+      hasEndTurn: true,
+      onUndo: noop,
+      onFinishTurn: noop,
+      onEditThrow: noop,
+      onDeleteThrow: noop,
+      onNewGame: noop,
+      isCalibrated: true,
+      onCalibrateClick: noop,
+      detectorState: 'STABLE',
+      motionThreshold: 3000,
+      onThresholdChange: noop,
+      debugCanvasRef: canvasRef,
+      ...extra,
+    };
+  };
+
+  it('visar vad appen väntar på', () => {
+    const html = renderToStaticMarkup(
+      createElement(Scoreboard, scoreboardProps({
+        prompt: { text: 'Kasta, Kristian', waiting: false },
+      }) as never),
+    );
+    expect(html).toContain('Kasta, Kristian');
+  });
+
+  it('"Avsluta tur" syns inte i normalfallet', () => {
+    const html = renderToStaticMarkup(
+      createElement(Scoreboard, scoreboardProps({}) as never),
+    );
+    expect(html).not.toContain('Avsluta tur');
+  });
+
+  it('...men erbjuds när något hängt sig', () => {
+    const html = renderToStaticMarkup(
+      createElement(Scoreboard, scoreboardProps({ showManualNext: true }) as never),
+    );
+    expect(html).toContain('Avsluta tur');
   });
 });

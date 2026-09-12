@@ -9,6 +9,7 @@ import { useMatch } from './hooks/useMatch';
 import { getScoreFromPixel } from './utils/dartMath';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
+import { ResumeCard } from './components/ResumeCard';
 import { segFromDartScore } from './game';
 import { engineFor, matchState, insertIndexForMissedThrow } from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
@@ -18,6 +19,14 @@ import { RetrievalTip } from './components/RetrievalTip';
 import { TurnHistory } from './components/TurnHistory';
 
 const RETRIEVAL_TIP_SEEN_KEY = 'kps-dart-cam:retrieval-tip-seen';
+
+/**
+ * Så färsk måste en sparad match vara för att återupptas UTAN att fråga.
+ * Två minuter träffar det fall man faktiskt vill ha tyst: sidan laddades om,
+ * telefonen släckte skärmen, Chrome startade om fliken. Allt äldre än så är
+ * lika gärna gårdagens match, och då är en tyst återupptagning bara förvirrande.
+ */
+const AUTO_RESUME_MS = 2 * 60 * 1000;
 
 export default function App() {
   const { isLoaded, isLoading, error, cv } = useOpenCV();
@@ -41,19 +50,35 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showRetrievalTip, setShowRetrievalTip] = useState(false);
+  /**
+   * Turen är färdigkastad och appen väntar på att pilarna dras ut. För 301/501
+   * syns det på att pilarna tagit slut; för Farfar avslutar motorn turen själv
+   * och då är `currentDarts` redan tom, så det måste sättas där turen tar slut.
+   */
+  const [awaitingRetrieval, setAwaitingRetrieval] = useState(false);
+  /** Något har hängt sig - då, och bara då, erbjuds "Avsluta tur". */
+  const [showManualNext, setShowManualNext] = useState(false);
   const [missedDarts, setMissedDarts] = useState<
     { playerName: string; read: number; expected: number } | null
   >(null);
 
   const {
-    match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow,
+    match, state, lastPlayedAt, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow,
   } = useMatch();
+  const [showResume, setShowResume] = useState(false);
+  const startupDecided = useRef(false);
 
   // Antal rena uttagningar bekräftade sen tavlan senast var full (nollställs
   // vid `handleBoardCleared`). Behövs för att räkna ut VAR i kastlistan en
   // pil som avslöjas vid uttagning (se `handleHiddenDartRevealed`) ska sättas
   // in - se kommentaren i useDartDetector.ts vid `snapshots`.
   const removedSinceClearRef = useRef(0);
+  /**
+   * Antal pilar som registrerats sedan tavlan senast var tom. Behövs för att
+   * skilja "Farfar-turen är färdigspelad" från "ingenting lästes av alls" -
+   * i båda fallen är `currentDarts` tom när tavlan töms.
+   */
+  const dartsSinceClearRef = useRef(0);
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
@@ -63,9 +88,41 @@ export default function App() {
 
   useEffect(() => () => transformMatrix?.delete(), [transformMatrix]);
 
-  // När kalibreringen är klar men inget spel pågår: visa uppstartsskärmen.
+  /**
+   * Uppstartsbeslutet: fortsätta den sparade matchen, fråga om den, eller
+   * börja om? Körs EN gång, när kalibreringen är på plats.
+   *
+   * Förut återupptogs den sparade matchen tyst oavsett ålder - man kom rakt in
+   * i gårdagens spel och första pilen hamnade på fel spelares poäng. Nu visas
+   * ställningen först, utom när matchen är så färsk att det uppenbart handlar
+   * om en omladdning eller en skärmsläckare mitt i spelet.
+   */
   useEffect(() => {
-    if (isCalibrated && !match) setShowSetup(true);
+    if (!isCalibrated || startupDecided.current) return;
+    startupDecided.current = true;
+    if (!match) {
+      setShowSetup(true);
+      return;
+    }
+    const fresh =
+      !matchState(match).finished &&
+      lastPlayedAt !== null &&
+      Date.now() - lastPlayedAt <= AUTO_RESUME_MS;
+    if (!fresh) setShowResume(true);
+  }, [isCalibrated, match, lastPlayedAt]);
+
+  // En ny match ärver inte föregående matchs väntan på uttagning.
+  useEffect(() => {
+    setAwaitingRetrieval(false);
+    setShowManualNext(false);
+    setMissedDarts(null);
+    dartsSinceClearRef.current = 0;
+    removedSinceClearRef.current = 0;
+  }, [match?.id]);
+
+  // Avslutas matchen (eller startas en ny) ska uppstartsskärmen upp igen.
+  useEffect(() => {
+    if (isCalibrated && !match && startupDecided.current) setShowSetup(true);
   }, [isCalibrated, match]);
 
   const handleVideoReady = useCallback((video: HTMLVideoElement) => {
@@ -84,6 +141,7 @@ export default function App() {
   const handleDartDetected = useCallback((pt: Point) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const st = throwSeg(segFromDartScore(scoreObj));
+    dartsSinceClearRef.current += 1;
 
     // Nästa tur är igång - varningen om förra turens missade pil är inte
     // aktuell längre (den går alltid att nå via Turer).
@@ -102,6 +160,7 @@ export default function App() {
     // "utslagen"). speak() köar efter speakScore ovan i stället för att
     // klippa av den.
     if (st && !engineFor(st.config).hasEndTurn && st.currentDarts.length === 0 && st.lastEvent) {
+      setAwaitingRetrieval(true);
       const ev = st.lastEvent;
       const outcome = ev.type === 'ELIMINATED' ? 'Utslagen.' : `${ev.saved} sparade ${ev.saved === 1 ? 'pil' : 'pilar'}.`;
       audioEngine.speak(`${ev.name}: ${ev.total} poäng. ${outcome}`);
@@ -116,28 +175,46 @@ export default function App() {
     // Ny omgång med uttagningar börjar om nästa gång tavlan töms igen.
     removedSinceClearRef.current = 0;
 
+    const readThisVisit = dartsSinceClearRef.current;
+    dartsSinceClearRef.current = 0;
+    setAwaitingRetrieval(false);
+    setShowManualNext(false);
+
     if (!match) return;
     const st = matchState(match);
     const engine = engineFor(match.config);
-    // 301/501: turen avslutas när tavlan töms. Farfar avslutar turen själv i
-    // motorn (se handleDartDetected), så här räcker det att detektorn
-    // nollställts.
-    if (engine.hasEndTurn && !st.finished && st.currentDarts.length > 0) {
+    const v = st.view;
+
+    if (st.finished) return;
+
+    if (engine.hasEndTurn) {
+      // 301/501: turen avslutas när tavlan töms.
+      //
+      // Även när NOLL pilar lästes av. Förut krävdes `currentDarts.length > 0`,
+      // och en tur där avläsningen missade alla tre pilarna hängde sig därför
+      // helt: spelaren drog ut pilarna, ingenting hände, och matchen stod kvar
+      // på samma spelare tills någon tryckte "Nästa". Detektorn signalerar
+      // numera tömd tavla även utan registrerad pil (se MATERIAL_HOLD_MS i
+      // useDartDetector) just för att den här grenen ska kunna gå vidare.
+      const read = st.currentDarts.length;
+      const expected = v.available;
+
       // Läs upp summan och nya ställningen INNAN finishTurn() nollställer
       // currentDarts/flyttar currentIndex - st här är fortfarande "turen som
       // precis avslutades". Vinst annonseras separat (useEffect på
       // state.view.win) för att inte krocka med den fanfaren.
-      const v = st.view;
       if (!v.win) {
-        audioEngine.speak(v.bust ? `${st.active.name}: tjock, poängen räknas inte.` : `${st.active.name}: ${v.total} poäng. ${v.remaining} kvar.`);
+        if (read === 0) {
+          audioEngine.speak(`${st.active.name}: ingen pil avläst. Ställningen står kvar.`);
+        } else {
+          audioEngine.speak(v.bust ? `${st.active.name}: tjock, poängen räknas inte.` : `${st.active.name}: ${v.total} poäng. ${v.remaining} kvar.`);
+        }
       }
 
       // Färre avlästa pilar än turen rymmer, utan att turen tog slut av sig
       // själv (utgång eller tjock)? Då missade avläsningen en pil. Säg till
       // direkt - spelaren står vid tavlan och ser inte skärmen, och tyst fel
       // ställning är värre än en extra tillsägelse.
-      const read = st.currentDarts.length;
-      const expected = v.available;
       if (!v.win && !v.bust && read < expected) {
         setMissedDarts({ playerName: st.active.name, read, expected });
         audioEngine.speak(`Obs: bara ${read} av ${expected} pilar avlästa.`);
@@ -147,6 +224,24 @@ export default function App() {
       audioEngine.playSwitchSound();
       const next = st.players[(st.currentIndex + 1) % st.players.length];
       if (next) audioEngine.speak(`${next.name}s tur`);
+    } else {
+      // Farfar avslutar turen själv i motorn när pilarna tar slut, och
+      // `endTurn` vägrar där (farfar.ts) - antalet pilar ÄR spelet, så en tur
+      // får inte hoppas över bara för att avläsningen missade något. Det enda
+      // rimliga är att säga till så att pilarna fylls i via Turer.
+      //
+      // Två olika sätt att missa: turen ligger halvfärdig (currentDarts kvar),
+      // eller så lästes ingenting alls under hela besöket vid tavlan. Har
+      // motorn redan avslutat turen och pilar lästes av var allt som det ska -
+      // då ska ingen varning komma.
+      const halfDone = st.currentDarts.length > 0;
+      if (halfDone || readThisVisit === 0) {
+        const read = halfDone ? st.currentDarts.length : 0;
+        setMissedDarts({ playerName: st.active.name, read, expected: v.available });
+        audioEngine.speak(
+          `Obs: bara ${read} av ${v.available} pilar avlästa. Fyll i under Turer.`,
+        );
+      }
     }
 
     // Visa tipset om omvänd uttagning tills spelaren stänger det själv (se
@@ -192,7 +287,10 @@ export default function App() {
     cv,
     videoElement,
     transformMatrix,
-    isCalibrated,
+    // Detektorn får inte gå medan uppstartskortet eller spelinställningarna
+    // ligger över: pilar som registreras då hamnar i fel match, eller i en
+    // match användaren just höll på att byta ut.
+    isCalibrated && !showSetup && !showResume,
     motionThreshold,
     debugCanvasRef,
     handleDartDetected,
@@ -212,6 +310,41 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.view.win, state?.finished]);
+
+  const hasEndTurn = match ? engineFor(match.config).hasEndTurn : true;
+
+  /**
+   * Vad appen väntar på, i klartext. Poängen är att spelaren står vid
+   * kastlinjen och inte ser små siffror - och att tystnad annars är omöjlig
+   * att skilja från ett fel.
+   */
+  const waitingForRetrieval =
+    !!state && !state.finished && (awaitingRetrieval || state.view.dartsLeft === 0);
+  const turnPrompt = !state
+    ? undefined
+    : state.finished
+      ? { text: `${state.winners.join(' och ')} vinner!`, waiting: false }
+      : waitingForRetrieval
+        ? { text: 'Dra ut pilarna – en i taget, i omvänd ordning', waiting: true }
+        : {
+            text: `Kasta, ${state.active.name}`,
+            waiting: false,
+          };
+
+  /**
+   * Nödutgången "Avsluta tur" visas först när något faktiskt hängt sig: appen
+   * har väntat på att pilarna ska dras ut i över en halv minut. Ligger den
+   * framme hela tiden läser den som ett steg man måste ta, och då trycker man
+   * på skärmen i onödan - vilket är just det som kan rubba stativet.
+   */
+  useEffect(() => {
+    if (!waitingForRetrieval || !hasEndTurn) {
+      setShowManualNext(false);
+      return;
+    }
+    const t = window.setTimeout(() => setShowManualNext(true), 35000);
+    return () => window.clearTimeout(t);
+  }, [waitingForRetrieval, hasEndTurn]);
 
   const handleCalibrationClick = () => {
     if (isCalibrated) {
@@ -264,7 +397,6 @@ export default function App() {
     }
   };
 
-  const hasEndTurn = match ? engineFor(match.config).hasEndTurn : true;
 
   return (
     <div className="relative flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
@@ -418,6 +550,32 @@ export default function App() {
           />
         )}
 
+        {/* Fortsätta sparad match? */}
+        {isCalibrated && showResume && !showSetup && state && (
+          <ResumeCard
+            state={state}
+            lastPlayedAt={lastPlayedAt}
+            onResume={() => {
+              setShowResume(false);
+              audioEngine.unlock();
+            }}
+            onNewGame={() => {
+              setShowResume(false);
+              setShowSetup(true);
+            }}
+            onPlayAgain={() => {
+              start({
+                mode: match!.config.mode,
+                doubleOut: match!.config.doubleOut,
+                farfarCap: match!.config.farfarCap,
+                players: match!.config.players.map((p) => ({ name: p.name })),
+              });
+              setShowResume(false);
+              audioEngine.unlock();
+            }}
+          />
+        )}
+
         {/* Game Setup */}
         {isCalibrated && showSetup && (
           <GameSetup
@@ -471,6 +629,8 @@ export default function App() {
         onHistoryClick={() => setShowHistory(true)}
         missedDarts={missedDarts}
         onDismissMissedDarts={() => setMissedDarts(null)}
+        prompt={turnPrompt}
+        showManualNext={showManualNext || !!missedDarts}
       />
     </div>
   );
