@@ -9,7 +9,7 @@ kostnad. Kamerabilder lämnar aldrig telefonen.
 ## Status
 
 Fungerar, men är inte färdigtrimmat. Geometrin och regelmotorn är verifierade
-mot 284 tester; datorseendet är verifierat på riktig hårdvara i några
+mot 290 tester; datorseendet är verifierat på riktig hårdvara i några
 sessioner och har fortfarande kända hål.
 
 **Fungerar:**
@@ -27,7 +27,12 @@ sessioner och har fortfarande kända hål.
 - Uppläsning på svenska (pil, poäng, spelarbyte, vinst) och ljudeffekter.
 - Rättning: knappsats per pil, turhistorik bakåt, insättning av en missad pil
   på rätt plats i turen.
-- Tavla tömd → automatiskt spelarbyte.
+- Tavla tömd → automatiskt spelarbyte, i **båda** spellägena. Under spelets
+  gång ska ingenting kräva att du går fram till telefonen: varje tryck är en
+  chans att knuffa stativet. En statusrad säger i klartext vad appen väntar på,
+  och "Avsluta tur" dyker bara upp om något hängt sig.
+- Uppstarten frågar innan den återupptar en sparad match — utom när den är
+  färskare än två minuter, för då handlar det om en omladdning mitt i spelet.
 
 **Fungerar inte fullt ut:**
 
@@ -39,7 +44,9 @@ sessioner och har fortfarande kända hål.
   avslöjandet av dolda pilar vid uttagning och den automatiska
   sektorrotationen — är verifierade offline men ännu inte mot riktiga kast.
 
-`AGENT.md` har arkitekturen, `CLAUDE.md` har alla mätvärden och fallgropar.
+`AGENT.md` har arkitekturen, `CLAUDE.md` har alla mätvärden och fallgropar,
+och `TESTPLAN.md` är den ordnade genomgången att köra nästa gång det finns en
+tavla att kasta mot.
 
 ---
 
@@ -58,7 +65,7 @@ https:// eller på localhost. Använd `mkcert` för ett lokalt certifikat, eller
 testa mot den publicerade Pages-versionen.
 
 ```bash
-npm test          # 284 tester: geometri, kalibrering, spetsdetektering, regelmotor
+npm test          # 290 tester: geometri, kalibrering, spetsdetektering, regelmotor
 npm run lint      # tsc --noEmit, strict mode
 npm run build     # produktionsbygge till dist/
 ```

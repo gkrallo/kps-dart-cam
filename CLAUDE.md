@@ -130,6 +130,7 @@ scripts/copy-opencv.mjs       Kopierar opencv.js från node_modules till public/
 public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
 .github/workflows/deploy.yml  Test → bygge → deploy till Pages
 AGENT.md                      Arkitektur + lista över kända begränsningar
+TESTPLAN.md                   Ordnad genomgång att köra vid tavlan (otestat -> testat)
 ```
 
 `dartMath.ts` är märkt med ★ för att den innehåller enda sanningskällan för
