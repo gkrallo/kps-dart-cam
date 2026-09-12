@@ -115,6 +115,7 @@ src/
     boardProjection.ts        Homografi fram/bak, SVG-projektion, computeCalibration
     boardEllipse.ts           Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts          Autodetektering: ellipsmetod + HoughCircles-fallback
+    sectorPhase.ts            Rotationen: vilken sektor är 20, ur röd/grön-växlingen i ringarna
     dartTip.ts                Spetsdetektering: axelanpassning (PCA) + breddtest
     blobGroups.ts             Sätter ihop maskfragment som hör till samma pil (+ minAreaRect/konvext hölje i JS)
     shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
@@ -139,7 +140,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 243 tester
+npm test         # 260 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -252,11 +253,22 @@ doubleOuter 170
    bredvid sina fält: ellipsen följer dubbelringen perfekt medan hela
    sektorhjulet är vridet och varje sektor läses fel. Uppmätt på Kristians
    tavla 2026-09-12. Döm därför av de **streckade sektorlinjerna mot tavlans
-   riktiga trådar**. Rättas med "Peka ut 20:an"
-   (`rotateCalibrationToAnchor`), som vrider hjulet till en godtycklig vinkel
-   i *tavlans* plan - inte i bilden, för under perspektiv är det inte samma
-   sak. (Den gjorde tidigare bara kvartssteg och var därmed oanvändbar mot
-   det här felet.)
+   riktiga trådar**.
+
+   Rotationen räknas numera ut automatiskt ur tavlan själv: dubbel- och
+   trippelringen växlar röd/grön varje sektor, och sektor 20 är en mörk sektor
+   med röd ring. `sectorPhase.ts` läser av färgen längs ringarna genom den
+   kalibrering man har och passar in fyrkantsvågen. Det körs dels inuti
+   `autoDetectBoardEllipse`, dels via knappen **"Rikta in sektorer"**
+   (`alignSectorsToBoard`) som fungerar på vilken kalibrering som helst -
+   handdragen, sparad eller autodetekterad - och bara ändrar rotationen.
+   Färgmönstret upprepar sig var 36:e grad, så svaret vecklas in till ±18°;
+   det sista steget är alltså fortfarande antagandet "20 nära toppen".
+   Går färgerna inte att läsa (konfidens < 0,6) görs ingen rättning alls, och
+   då finns "Peka ut 20:an" (`rotateCalibrationToAnchor`) kvar, som vrider
+   hjulet till en godtycklig vinkel i *tavlans* plan - inte i bilden, för
+   under perspektiv är det inte samma sak. (Den gjorde tidigare bara
+   kvartssteg och var därmed oanvändbar mot det här felet.)
 3. Vid "Starta spel" konverterar `App.tsx` skärmkoordinater till
    videokoordinater. Videon visas med `object-cover`, alltså skalad med
    `Math.max(cw/vw, ch/vh)` och centrerad — samma formel måste användas åt båda
@@ -370,9 +382,11 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Blur | Gauss 5×5 | `useDartDetector` | Ärvd storlek, men flyttad till rätt plats i kedjan. |
 | Ring-färgmask (HSV) | röd H<13 ∪ H>167, grön H 36–92, S≥55–70, V≥45–55 | `boardDetector` | **Satt av oss.** Tillåtande — bekräftat mot fotot i `realBoard.test.ts` att röd/grön-masken plockar ut ringarna även på en sliten tavla i skugga. Kan behöva justeras för din belysning. |
 | Ellipsval | fyrkantighet ≥ 0.55, centrum inom 0.42 × min(bild) | `boardDetector` | **Satt av oss.** Fotot visade att rödbrunt trädäck matchar "röd" bättre än den slitna ringen — "största konturen" låste på däcket. En ring är rund och nära bildmitten; däck och pilfenor är avlånga fläckar i kanten. |
+| Sektorrotation: minsta konfidens | 0,6 | `boardDetector` (`MIN_SECTOR_CONFIDENCE`) | **Uppmätt av oss** 2026-09-12: Kristians slitna tavla i skugga med belysningsring gav 0,93 med 72 % av proverna färgbestämda; syntetiskt över 0,99. Under tröskeln vrids hjulet inte alls - hellre "20 rakt upp" än åt fel håll. |
+| Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 243 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 260 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
@@ -550,6 +564,18 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    sig för lite i BÅDA måtten - samtidigt som den tar konturantalet från 290
    till 402–840. Färgspåret är alltså mätt och lagt ned; problemet var vilken
    blobb som valdes, inte vad masken innehöll.
+
+1e. **Autokalibreringens rotation — ÅTGÄRDAT 2026-09-12, otestat på hårdvara.**
+   Ellipsmetoden kunde inte se vilken sektor som var 20 (ringarna är
+   rotationssymmetriska) och antog "20 rakt upp". Nu läses röd/grön-växlingen
+   av längs ringarna, se kalibreringsflödet ovan och `sectorPhase.ts`. Mätt på
+   fotot `board-empty-ringlight.jpg`: tavlan står **-2,5° snett**, och en helt
+   oberoende metod på samma bild (luminansgradient längs radien, alltså
+   trådarna i stället för färgerna, ingen delad kod) säger -2,34°. 2,5° är
+   7,4 mm i sidled vid dubbelringens ytterkant - osynligt på wireframets form,
+   men nog för att flytta varje kast nära en tråd till grannsektorn.
+   Kvar: färgmönstret upprepar sig var 36:e grad, så "20 nära toppen" behövs
+   fortfarande för att välja bland de tio lösningarna.
 
 2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
    dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en

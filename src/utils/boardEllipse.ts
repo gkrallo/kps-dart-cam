@@ -278,6 +278,17 @@ export function orientCalibrationToward(
 }
 
 /**
+ * Vrider kalibreringens sektorhjul `rad` radianer i TAVLANS plan (positivt =
+ * medurs sett framifrån). Inte samma sak som att vrida bilden: under perspektiv
+ * är en rotation i tavlans plan inte en rotation i bildplanet.
+ */
+export function rotateCalibration(calib: BoardCalibration, rad: number): BoardCalibration {
+  if (!rad) return calib;
+  const rotated = multiplyMat3(calib.H, rotationMat3(rad));
+  return calibrationFromH(rotated, calib.residualPx, calib.maxResidualPx) ?? calib;
+}
+
+/**
  * Som `orientCalibrationToward` men mot lodrätt uppåt i bilden - antagandet
  * "20 sitter nära toppen". Robust mot kamerans roll.
  */

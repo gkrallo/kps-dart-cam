@@ -5,7 +5,7 @@ import {
   generateProjectedCircleSVG,
   getSectorBoundaryAngles,
 } from '../utils/boardProjection';
-import { autoDetectBoardEllipse, autoDetectBoardOpenCV } from '../utils/boardDetector';
+import { alignSectorsToBoard, autoDetectBoardEllipse, autoDetectBoardOpenCV } from '../utils/boardDetector';
 import {
   fromStored,
   loadCalibration,
@@ -13,7 +13,7 @@ import {
   saveCalibration,
 } from '../utils/calibration';
 import type { ZoomCapability } from './CameraFeed';
-import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward } from 'lucide-react';
+import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward, Compass } from 'lucide-react';
 
 interface CalibrationOverlayProps {
   containerWidth: number;
@@ -177,6 +177,32 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
         setSiktStatus(null);
       }, 700);
     });
+  };
+
+  // Riktar in sektorhjulet mot tavlans verkliga trådar utifrån röd/grön-
+  // växlingen i ringarna. Fungerar oavsett hur punkterna hamnade där de är -
+  // autodetekterade, sparade eller handdragna - och ändrar bara rotationen.
+  // Det här är rättningen som annars måste göras genom att dra alla fyra
+  // punkterna längs ringen för hand.
+  const handleAlignSectors = () => {
+    if (!videoElement || !cv || points.length !== 4) return;
+    const res = alignSectorsToBoard(cv, videoElement, points, containerWidth, containerHeight);
+    if (!res) {
+      setDetectStatus(
+        'Kunde inte läsa av ringarnas färger. Mer ljus på tavlan, eller peka ut 20:an för hand.',
+      );
+      window.setTimeout(() => setDetectStatus(null), 6000);
+      return;
+    }
+    setPoints(res.points);
+    onPointsChange(res.points);
+    const d = res.offsetDeg;
+    setDetectStatus(
+      Math.abs(d) < 0.3
+        ? 'Sektorerna satt redan rätt.'
+        : `Sektorerna vred ${Math.abs(d).toFixed(1)}° ${d > 0 ? 'medurs' : 'moturs'}.`,
+    );
+    window.setTimeout(() => setDetectStatus(null), 5000);
   };
 
   const handlePointerDown = (idx: number, e: React.PointerEvent) => {
@@ -693,6 +719,15 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           >
             <Crosshair className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{anchorMode ? 'Tryck på 20:an…' : 'Peka ut 20:an'}</span>
+          </button>
+
+          <button
+            onClick={handleAlignSectors}
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-300 active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border border-slate-700/80 shadow-lg backdrop-blur-md transition-all"
+            title="Vrider sektorhjulet så att de streckade linjerna hamnar på tavlans riktiga trådar"
+          >
+            <Compass className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Rikta in sektorer</span>
           </button>
 
           <button

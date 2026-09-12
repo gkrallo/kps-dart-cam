@@ -3,9 +3,21 @@ import {
   calibrationFromRingEllipses,
   cardinalCalibrationPoints,
   orientToImageUp,
+  rotateCalibration,
   type Ellipse,
   type RingEllipse,
 } from './boardEllipse';
+import { CANONICAL_CALIBRATION_MM, computeCalibration } from './boardProjection';
+import { estimateSectorRotation, type ColourSampler, type RGB } from './sectorPhase';
+
+/**
+ * Under den här konfidensen används inte färgmetodens rotation alls.
+ * Uppmätt på Kristians slitna utomhustavla i skugga plus belysningsring:
+ * 0,93 med 72 % av proverna färgbestämda. Syntetiskt: över 0,99. En bild där
+ * ringarna inte går att färgbestämma ska falla tillbaka på "20 rakt upp"
+ * hellre än att vrida hjulet åt fel håll.
+ */
+const MIN_SECTOR_CONFIDENCE = 0.6;
 
 function dist(p1: Point, p2: Point): number {
   return Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -167,6 +179,103 @@ export function autoDetectBoardOpenCV(
   }
 }
 
+/** Läser färgen ur en CV_8UC3-Mat i RGB-ordning. Null utanför bilden. */
+function matSampler(rgb: any, vw: number, vh: number): ColourSampler {
+  return (x: number, y: number): RGB | null => {
+    const xi = Math.round(x);
+    const yi = Math.round(y);
+    if (xi < 0 || yi < 0 || xi >= vw || yi >= vh) return null;
+    const p = rgb.ucharPtr(yi, xi);
+    return [p[0], p[1], p[2]];
+  };
+}
+
+export interface SectorAlignment {
+  /** De fyra kalibreringspunkterna, rättade, i containerkoordinater. */
+  points: Point[];
+  /** Hur mycket hjulet vreds, i grader. Positivt = medurs. */
+  offsetDeg: number;
+  /** 0-1, se MIN_SECTOR_CONFIDENCE. */
+  confidence: number;
+}
+
+/**
+ * Riktar in sektorhjulet mot tavlans verkliga trådar, utifrån de fyra
+ * kalibreringspunkter som redan finns - manuellt placerade eller
+ * autodetekterade.
+ *
+ * Det här är rättningen Kristian fick göra för hand 2026-09-12 genom att dra
+ * punkterna längs ringen. Den ändrar BARA rotationen: ringarnas storlek och
+ * perspektivet lämnas orörda, så en kalibrering som redan följer dubbelringen
+ * fortsätter göra det.
+ *
+ * Returnerar null om färgerna inte gick att läsa tillräckligt säkert - då är
+ * det bättre att låta användaren rätta för hand än att gissa.
+ */
+export function alignSectorsToBoard(
+  cv: any,
+  videoElement: HTMLVideoElement,
+  points: Point[],
+  containerWidth: number,
+  containerHeight: number,
+): SectorAlignment | null {
+  if (!cv || !videoElement || videoElement.videoWidth === 0) return null;
+  if (points.length !== 4) return null;
+
+  const vw = videoElement.videoWidth;
+  const vh = videoElement.videoHeight;
+  const mats: any[] = [];
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = vw;
+    canvas.height = vh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(videoElement, 0, 0, vw, vh);
+    const src = cv.imread(canvas);
+    mats.push(src);
+    const rgb = new cv.Mat();
+    mats.push(rgb);
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+
+    // Kalibreringen byggs i CONTAINER-koordinater, för det är där punkterna
+    // bor och där de ska tillbaka. Bara färgavläsningen behöver gå till
+    // videokoordinater - object-cover, samma formel som överallt annars.
+    const calib = computeCalibration([...CANONICAL_CALIBRATION_MM], points, { refine: false });
+    if (!calib) return null;
+
+    const scale = Math.max(containerWidth / vw, containerHeight / vh);
+    const offsetX = (containerWidth - vw * scale) / 2;
+    const offsetY = (containerHeight - vh * scale) / 2;
+    const videoSampler = matSampler(rgb, vw, vh);
+    const sample: ColourSampler = (x, y) =>
+      videoSampler((x - offsetX) / scale, (y - offsetY) / scale);
+
+    const rotation = estimateSectorRotation(calib, sample);
+    if (!rotation || rotation.confidence < MIN_SECTOR_CONFIDENCE) return null;
+
+    const [top, right, bottom, left] = cardinalCalibrationPoints(
+      rotateCalibration(calib, rotation.offsetRad),
+    );
+    return {
+      points: [top, right, bottom, left],
+      offsetDeg: (rotation.offsetRad * 180) / Math.PI,
+      confidence: rotation.confidence,
+    };
+  } catch (err) {
+    console.error('alignSectorsToBoard misslyckades:', err);
+    return null;
+  } finally {
+    for (const m of mats) {
+      try {
+        m.delete();
+      } catch {
+        /* redan raderad */
+      }
+    }
+  }
+}
+
 /**
  * Ellipsbaserad autodetektering.
  *
@@ -178,8 +287,11 @@ export function autoDetectBoardOpenCV(
  * Färgtrösklarna nedan är rimliga startvärden, inte intrimmade mot en riktig
  * tavla i verklig belysning - det steget kräver hårdvara. Hittas bara en ring
  * används den ensam (mindre exakt radiellt men fortfarande lutningsmedveten).
- * Rotationen (vilken sektor som är 20) är en grov gissning "20 i toppen" som
- * användaren bekräftar.
+ *
+ * Rotationen kommer inte ur ringarna (de är rotationssymmetriska) utan ur
+ * röd/grön-växlingen längs dem - se `sectorPhase.ts`. Går färgerna inte att
+ * läsa faller den tillbaka på gissningen "20 i toppen", som användaren då
+ * får bekräfta med "Peka ut 20:an".
  */
 export function autoDetectBoardEllipse(
   cv: any,
@@ -297,7 +409,18 @@ export function autoDetectBoardEllipse(
 
     const calib = calibrationFromRingEllipses(rings);
     if (!calib) return null;
-    const oriented = orientToImageUp(calib);
+
+    // Ringarna är rotationssymmetriska, så de kan inte säga vilken sektor som
+    // är 20 - `orientToImageUp` antar bara att den sitter rakt upp. Sitter
+    // tavlan några grader snett (Kristians gör det) hamnar hela sektorhjulet
+    // vridet medan wireframets FORM ser perfekt ut. Röd/grön-växlingen i
+    // ringarna avslöjar vridningen; se sectorPhase.ts.
+    const upright = orientToImageUp(calib);
+    const rotation = estimateSectorRotation(upright, matSampler(rgb, vw, vh));
+    const oriented =
+      rotation && rotation.confidence >= MIN_SECTOR_CONFIDENCE
+        ? rotateCalibration(upright, rotation.offsetRad)
+        : upright;
     const [top, right, bottom, left] = cardinalCalibrationPoints(oriented);
 
     // Videon visas med object-cover: skalad med max() och centrerad.
