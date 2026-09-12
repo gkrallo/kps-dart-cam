@@ -1,7 +1,7 @@
 import { RefObject, useEffect, useRef } from 'react';
 import { Point } from '../types';
 import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../utils/dartMath';
-import { detectDartAxisTip } from '../utils/dartTip';
+import { chooseDartTip, detectDartAxisTip } from '../utils/dartTip';
 import { classifyShadow, type BlobSample } from '../utils/shadowTest';
 
 /** Ringradier i den warpade bilden, härledda ur de officiella mm-måtten. */
@@ -162,6 +162,45 @@ export const useDartDetector = (
     const absorbIntoTop = () => {
       if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
     };
+
+    /** Omskrivande rektangel för senast granskade blob, satt av findDartTip. */
+    let lastBlobRect: { x: number; y: number; width: number; height: number } | null = null;
+
+    /**
+     * Absorberar BARA den förkastade blobbens område, inte hela bildrutan.
+     *
+     * Skälet: en förkastad blob (arm, skugga, ljusskifte) sitter oftast någon
+     * helt annanstans i bilden än pilen. Absorberar man hela rutan sväljs
+     * pilen med, och då finns den i referensen - den blir permanent osynlig
+     * och kan aldrig registreras. Hände två gånger 2026-09-12: en arm nere
+     * till vänster respektive ett ljusskifte förkastades, och den nyss
+     * placerade pilen i bullen försvann i samma andetag (`baselineNoise` föll
+     * till 0 med pilen kvar i tavlan).
+     *
+     * Radvis `set` på `.data` i stället för `roi()` + `copyTo`: i den här
+     * OpenCV.js-byggen går det inte att lita på att en ROI skriver igenom
+     * till föräldern (jfr clone()-fällan), och radkopiering är entydig.
+     */
+    const absorbBlobRegion = () => {
+      const top = snapshots[snapshots.length - 1];
+      if (!top) return;
+      if (!lastBlobRect) {
+        absorbIntoTop(); // ingen kontur att peka på - brusnivå, ta hela
+        return;
+      }
+      const w = rawGray.cols;
+      const x0 = Math.max(0, lastBlobRect.x);
+      const y0 = Math.max(0, lastBlobRect.y);
+      const x1 = Math.min(w, lastBlobRect.x + lastBlobRect.width);
+      const y1 = Math.min(rawGray.rows, lastBlobRect.y + lastBlobRect.height);
+      if (x1 <= x0 || y1 <= y0) return;
+      const src = rawGray.data;
+      const dst = top.data;
+      for (let y = y0; y < y1; y++) {
+        const off = y * w;
+        dst.set(src.subarray(off + x0, off + x1), off + x0);
+      }
+    };
     const resetSnapshots = () => {
       snapshots.forEach((s) => s.delete());
       snapshots = [];
@@ -185,6 +224,15 @@ export const useDartDetector = (
     // ~13 mm i den warpade bilden (2.3529 px/mm). Under det är "ny pil" troligen
     // samma pil igen.
     const MIN_DART_SPACING_PX = 30;
+
+    // En spets som warpas till en radie långt utanför tavlan kan inte vara en
+    // spets. Tavlan slutar vid 170 mm; en pil som verkligen sitter i
+    // omgivningen läser 170-185 mm, så taket ligger över det. Uppmätt
+    // 2026-09-12: en T6 lästes som MISS på radie 210 mm och en 10:a på 242 mm
+    // - i båda fallen var blobben bara pilens VINGE, och en arm i bildkanten
+    // gav 273-292 mm. Att registrera det som MISS är tyst fel: poängen blir 0
+    // OCH pilräkningen stämmer ändå inte.
+    const MAX_PLAUSIBLE_RADIUS_MM = 190;
 
     // Gråvärdesskillnad som räknas som "här har något ändrats" i RÅBILDEN.
     //
@@ -301,33 +349,67 @@ export const useDartDetector = (
       const hierarchy = new cv.Mat();
       cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
-      let bestIdx = -1;
-      let bestArea = 0;
-      for (let i = 0; i < contours.size(); i++) {
-        const area = cv.contourArea(contours.get(i));
-        if (area > bestArea) {
-          bestArea = area;
-          bestIdx = i;
-        }
-      }
-
       // Arean är relativ bildstorleken nu (rå bild, inte den fasta 800x800:an).
       // maxArea sänkt till 2.5 %: riktiga kast från stativet mätte 7 000-18 000 px,
       // en arm/hand vid pilhämtning ~80 000 px och slank igenom det gamla 5 %-taket.
       const minArea = frameArea * 0.0002;
       const maxArea = frameArea * 0.025;
 
+      // Kandidaterna prövas i storleksordning i stället för att bara den
+      // STÖRSTA konturen får chansen. Skälet: är handen kvar i bild när
+      // pilen landar - och det är den alltid när man handplacerar en pil -
+      // så är armen större än pilen. Med bara största konturen förkastas
+      // armen och pilen får aldrig prövas, trots att den ligger där som en
+      // egen kontur i samma maskbild. Uppmätt 2026-09-12: tre försök i rad
+      // med handplacerad pil i bullen gav bara armblobben nere i bildhörnet.
+      const MAX_CANDIDATES = 5;
+      const candidates: { idx: number; area: number }[] = [];
+      for (let i = 0; i < contours.size(); i++) {
+        const area = cv.contourArea(contours.get(i));
+        if (area > minArea && area < maxArea) candidates.push({ idx: i, area });
+      }
+      candidates.sort((a, b) => b.area - a.area);
+      const tried = candidates.slice(0, MAX_CANDIDATES);
+
       let result: TipFind | null = null;
+      // Störste blobben inom areafönstret är den som absorberas om inget dög.
+      lastBlobRect = tried.length ? cv.boundingRect(contours.get(tried[0].idx)) : null;
 
-      if (bestIdx === -1) {
+      if (contours.size() === 0) {
         lastAnalysis = `ingen kontur (diff för liten)`;
-      } else if (bestArea <= minArea) {
-        lastAnalysis = `blob för liten: ${bestArea | 0} < ${minArea | 0} px`;
-      } else if (bestArea >= maxArea) {
-        lastAnalysis = `blob för stor: ${bestArea | 0} > ${maxArea | 0} px (hand/skugga/exponering?)`;
+      } else if (tried.length === 0) {
+        lastAnalysis = `ingen kontur i areafönstret ${minArea | 0}-${maxArea | 0} px (${contours.size()} konturer)`;
       } else {
-        const contour = contours.get(bestIdx);
+        const rejected: string[] = [];
+        for (const cand of tried) {
+          const found = evaluateCandidate(contours.get(cand.idx), cand.area, reference, contours.size());
+          if (found) {
+            result = found;
+            lastBlobRect = cv.boundingRect(contours.get(cand.idx));
+            break;
+          }
+          rejected.push(`${cand.area | 0}px: ${lastAnalysis ?? '?'}`);
+        }
+        if (!result) lastAnalysis = `inget av ${tried.length} kandidater dög [${rejected.join(' | ')}]`;
+      }
 
+      contours.delete();
+      hierarchy.delete();
+      return result;
+    };
+
+    /**
+     * Prövar EN kontur: skuggtest, formtest och rimlig radie. Returnerar
+     * spetsen eller null (med skälet i `lastAnalysis`).
+     */
+    const evaluateCandidate = (
+      contour: any,
+      bestArea: number,
+      reference: any,
+      nContours: number,
+    ): TipFind | null => {
+      let result: TipFind | null = null;
+      {
         // Skuggtest FÖRE formtestet: en skugga kan mycket väl vara avlång och
         // klara både elongation och konfidens. Det som avslöjar den är att
         // tavlans eget mönster lyser igenom - se shadowTest.ts.
@@ -344,61 +426,28 @@ export const useDartDetector = (
         const short = Math.max(Math.min(rect.size.width, rect.size.height), 1);
         const elongation = long / short;
 
-        // Övre gräns: en pil sedd från stativet mäter elong ~3-5 (uppmätt på
-        // riktiga kast). elong > 12 är en LINJE - spindeltråd, tavelkant,
-        // skuggrand, kabel - inte en pil. Utan taket registrerades sådant som
-        // spökkast (t.ex. en 24:1-strimma innan första kastet).
-        const MAX_ELONGATION = 12;
-
+        // Själva beslutet - vilken metod att tro på, eller avstå - ligger i
+        // `chooseDartTip` (ren funktion). Trösklarna där är framtrimmade mot
+        // riktiga kast och låsta med regressionstester i
+        // chooseDartTip.test.ts; här inne hade de inte gått att testa alls.
         let tipRaw: Point | null = null;
         let how = '';
         let axis: ReturnType<typeof detectDartAxisTip> = null;
-        if (lighting.isLightingOnly) {
-          how = lighting.reason;
-        } else {
-          try {
-            axis = detectDartAxisTip(points, { minElongation: 2 });
-            // Konfidensgräns 0.4: uppmätt på tre testrundor låg riktiga kast på
-            // 0.55-0.75, medan spökkasten (armkant/skugga som råkar bli avlång)
-            // låg på 0.20-0.23. Gapet däremellan är tomt. Gamla gränsen 0.15
-            // släppte igenom en spökpil i början av varje spel.
-            if (axis && axis.elongation > MAX_ELONGATION) {
-              how = `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_ELONGATION} (kant/tråd/skugga, inte pil)`;
-            } else if (axis && axis.confidence > 0.4) {
-              // Axelanpassning + breddtest: fenan är bredare än spetsen.
-              tipRaw = axis.tip;
-              how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
-            } else if (elongation <= 5 && (elongation >= 2.5 || lighting.decided)) {
-              // Nästan frontal pil: axeln går inte att lita på. Blobbens
-              // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
-              // Taket är 5, inte MAX_ELONGATION: är blobben 9:1 är den en
-              // strimma (kant/skugga), inte en pil sedd framifrån - två sådana
-              // slank igenom tidigare.
-              //
-              // Golvet var 2.5, utifrån en gammal gissning att en frontal pil
-              // mäter 2.5-4. FEL: uppmätt på Kristians tavla 2026-09-12 (kamera
-              // nästan rakt framför, pilarna pekar mot linsen) mätte tre raka
-              // kast elong 1.2, 1.4 och 1.6 - alla förkastades, både här och av
-              // axelmetoden (som kräver >= 2). Därför inget golv alls numera,
-              // men bara om skuggtestet AKTIVT frikänt blobben (`decided`): en
-              // rund fläck som vi inte kunde mäta på är för svag grund. De tre
-              // kasten hade r=0.02-0.27 med 1300-4000 punkter, alltså tydligt
-              // föremål och inte ljusskifte.
-              let mx = 0;
-              let my = 0;
-              for (const p of points) {
-                mx += p.x;
-                my += p.y;
-              }
-              tipRaw = { x: mx / points.length, y: my / points.length };
-              how = `tyngdpunkt (elong ${elongation.toFixed(1)})`;
-            } else {
-              how = `förkastad: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) + ' elong ' + axis.elongation.toFixed(1) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} (utanför 2.5-5)`;
-            }
-          } catch (err) {
-            console.error('Spetsdetektering misslyckades:', err);
-            how = 'krasch i spetsdetektering';
-          }
+        try {
+          axis = lighting.isLightingOnly ? null : detectDartAxisTip(points, { minElongation: 2 });
+          const choice = chooseDartTip({
+            points,
+            elongation,
+            axis,
+            isLightingOnly: lighting.isLightingOnly,
+            lightingDecided: lighting.decided,
+            lightingReason: lighting.reason,
+          });
+          tipRaw = choice.tip;
+          how = choice.how;
+        } catch (err) {
+          console.error('Spetsdetektering misslyckades:', err);
+          how = 'krasch i spetsdetektering';
         }
 
         // ?debug: siffrorna bakom beslutet. Viktigast är att BÅDA ändarna av
@@ -423,7 +472,7 @@ export const useDartDetector = (
           // ~60x50.
           const bb = cv.boundingRect(contour);
           lastDiag =
-            `area=${bestArea | 0} bbox=${bb.width}x${bb.height} kont=${contours.size()}` +
+            `area=${bestArea | 0} bbox=${bb.width}x${bb.height} kont=${nContours}` +
             ` elong=${elongation.toFixed(1)}` +
             (axis
               ? ` axel(conf=${axis.confidence.toFixed(2)} elong=${axis.elongation.toFixed(1)}` +
@@ -436,15 +485,26 @@ export const useDartDetector = (
             (tipRaw ? ` VALT=${at(tipRaw)} raw=${tipRaw.x | 0},${tipRaw.y | 0}` : ' VALT=-');
         }
 
-        if (tipRaw) {
-          result = { tip: tipRaw, how };
-        } else {
+        if (!tipRaw) {
           lastAnalysis = `blob OK (${bestArea | 0} px) men ${how}`;
+        } else {
+          // Rimlighetskoll på radien HÄR, inte vid registreringen: en kandidat
+          // vars spets warpas utanför tavlan ska förkastas så att NÄSTA
+          // kandidat får prövas. Låg kollen kvar i registerNewThrow spärrades
+          // hela bildrutan av den största blobben (typiskt en arm), och pilen
+          // bredvid fick aldrig chansen. Tavlan slutar vid 170 mm; en pil i
+          // omgivningen läser 170-185, så taket ligger över det.
+          const w = warpPoint(tipRaw);
+          const radiusMM =
+            Math.hypot(w.x - BOARD_PX / 2, w.y - BOARD_PX / 2) * MM_PER_PX;
+          if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
+            lastAnalysis = `spets på radie ${radiusMM | 0} mm, utanför tavlan (troligen arm eller bara vingen)`;
+          } else {
+            result = { tip: tipRaw, how };
+          }
         }
       }
 
-      contours.delete();
-      hierarchy.delete();
       return result;
     };
 
@@ -476,27 +536,14 @@ export const useDartDetector = (
       const nowMs = performance.now();
       const tooSoon = nowMs - lastRegisterTime < 1000;
 
-      // En spets som warpas till en radie långt utanför tavlan kan inte vara
-      // en spets. Tavlan slutar vid 170 mm; en pil som verkligen sitter i
-      // omgivningen runt tavlan läser 170-185 mm, så taket ligger över det.
-      // Uppmätt 2026-09-12: en T6 lästes som MISS på radie 210 mm och en 10:a
-      // på 242 mm - i båda fallen var blobben bara pilens VINGE, som stack ut
-      // utanför tavlan, och dess tyngdpunkt hamnade utanför kanten. Att
-      // registrera det som MISS är tyst fel: poängen blir 0 och pilräkningen
-      // stämmer ändå inte. Bättre att förkasta och låta varningen "bara 2 av
-      // 3 pilar avlästa" tala om att en pil behöver fyllas i för hand.
-      const radiusMM = Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) * MM_PER_PX;
-      const MAX_PLAUSIBLE_RADIUS_MM = 190;
-
-      if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
-        lastAnalysis = `pil förkastad (spets på radie ${radiusMM | 0} mm, utanför tavlan - troligen bara vingen)`;
-        absorbIntoTop();
-      } else if (tooSoon) {
+      // Radiekollen ligger i evaluateCandidate, så att en kandidat utanför
+      // tavlan hoppas över och nästa får prövas.
+      if (tooSoon) {
         lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
-        absorbIntoTop();
+        absorbBlobRegion();
       } else if (nearKnownDart(tip)) {
         lastAnalysis = `pil ignorerad (för nära en redan registrerad, samma pil eller dess hål?)`;
-        absorbIntoTop();
+        absorbBlobRegion();
       } else {
         lastRegisterTime = nowMs;
         detectedDartsRef.current.push(tip);
@@ -606,7 +653,7 @@ export const useDartDetector = (
       // Vanligt nytt kast: mer material än toppen av stacken hade.
       const found = findDartTip(rawThresh, top, frameArea);
       if (found) registerNewThrow(found);
-      else absorbIntoTop(); // skugga/hand/ljusskifte - se absorbIntoTop
+      else absorbBlobRegion(); // skugga/hand/ljusskifte - bara blobbens yta
       logAnalysis('KAST', dTop, dBase);
     };
 

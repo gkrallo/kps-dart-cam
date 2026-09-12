@@ -157,3 +157,119 @@ export function detectDartAxisTip(
 
   return { tip, tail, axis, centroid: { x: cx, y: cy }, elongation, tipWidthPx, tailWidthPx, confidence };
 }
+
+/* ------------------------------------------------------------------ *
+ * Valet av spets: vilken metod ska tro på, och när ska vi avstå?
+ * ------------------------------------------------------------------ */
+
+export interface TipChoiceInput {
+  /** Maskens konturpunkter i RÅ kamerabild. */
+  points: Point[];
+  /** `minAreaRect`-avlånghet för blobben (lång sida / kort sida). */
+  elongation: number;
+  /** Axelanpassningens resultat, eller null om den inte gick att göra. */
+  axis: DartAxisResult | null;
+  /** Var förändringen bara en ljusändring? Då finns ingen pil alls. */
+  isLightingOnly: boolean;
+  /** Kunde skuggtestet AKTIVT avgöra saken? Se shadowTest.ts. */
+  lightingDecided: boolean;
+  /** Skuggtestets motivering, för loggen. */
+  lightingReason?: string;
+}
+
+export interface TipChoice {
+  /** Spetsen i samma koordinater som `points`, eller null = avstå. */
+  tip: Point | null;
+  /** Vilken metod som valdes, eller varför vi avstod. */
+  how: string;
+}
+
+/**
+ * Övre gräns för axelmetoden: en pil sedd från stativet mäter elong ~2-5.
+ * Över 12 är det en LINJE - spindeltråd, tavelkant, skuggrand, kabel.
+ */
+export const MAX_AXIS_ELONGATION = 12;
+
+/**
+ * Konfidensgräns för att lita på axelns spets-vs-fena-bedömning.
+ *
+ * Var 0.4, satt när riktiga kast mätte 0.55-0.75 och artefakter 0.20-0.23.
+ * Sänkt till 0.33 efter 2026-09-12: en kraftigt lutad pil i bullen mätte
+ * 0.43 - alltså betydligt lägre än det tidigare intervallet - medan dagens
+ * artefakter (arm i bildkanten) låg på 0.09, 0.10, 0.15 och 0.23. Gapet går
+ * numera mellan 0.23 och 0.43, och 0.33 ligger mitt i det.
+ */
+export const MIN_AXIS_CONFIDENCE = 0.33;
+
+/**
+ * Tyngdpunktsmetoden får bara användas på KOMPAKTA blobbar.
+ *
+ * Var 5. Uppmätt 2026-09-12 att det var för tillåtande: dagens artefakter
+ * hade minAreaRect-elong 3.3, 3.8 och 4.3 med konfidens 0.09-0.15, och
+ * släpptes alltså igenom som "frontal pil" - de räddades bara av att spetsen
+ * hamnade utanför tavlan och fångades av radiespärren. Och tyngdpunkten är
+ * garanterat fel i en lång blob: den sitter mitt på pilkroppen, flera
+ * centimeter från spetsen. Den är bara försvarbar när blobben verkligen är en
+ * kompakt klump, alltså en pil som pekar mot linsen.
+ */
+export const MAX_CENTROID_ELONGATION = 3;
+
+/**
+ * Avgör vilken spets vi ska tro på - eller om vi ska avstå helt.
+ *
+ * Att avstå är ett fullgott svar: appen varnar vid turslut när färre pilar
+ * lästs av än kastats, och då går pilen att fylla i för hand. Det är bättre
+ * än att gissa fram en poäng som tyst blir fel.
+ */
+export function chooseDartTip(input: TipChoiceInput): TipChoice {
+  const { points, elongation, axis, isLightingOnly, lightingDecided, lightingReason } = input;
+
+  if (isLightingOnly) {
+    return { tip: null, how: lightingReason ?? 'bara en ljusändring, ingen pil' };
+  }
+
+  if (axis && axis.elongation > MAX_AXIS_ELONGATION) {
+    return {
+      tip: null,
+      how: `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_AXIS_ELONGATION} (kant/tråd/skugga, inte pil)`,
+    };
+  }
+
+  if (axis && axis.confidence > MIN_AXIS_CONFIDENCE) {
+    return {
+      tip: axis.tip,
+      how: `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`,
+    };
+  }
+
+  // Nästan frontal pil: axeln går inte att lita på, men blobben är en kompakt
+  // klump och då ligger tyngdpunkten nära spetsen - parallaxen är liten när
+  // pilen pekar mot linsen (uppmätt: tyngdpunkten läser radien inom ~1 mm).
+  // Kravet på `lightingDecided` för de riktigt runda: en rund fläck som vi
+  // inte kunde mäta på är för svag grund för ett kast.
+  if (elongation <= MAX_CENTROID_ELONGATION && (elongation >= 2.5 || lightingDecided)) {
+    if (points.length === 0) return { tip: null, how: 'inga konturpunkter' };
+    let mx = 0;
+    let my = 0;
+    for (const p of points) {
+      mx += p.x;
+      my += p.y;
+    }
+    return {
+      tip: { x: mx / points.length, y: my / points.length },
+      how: `tyngdpunkt (elong ${elongation.toFixed(1)})`,
+    };
+  }
+
+  const axisNote = axis
+    ? `conf ${axis.confidence.toFixed(2)} elong ${axis.elongation.toFixed(1)}`
+    : 'null';
+  return {
+    tip: null,
+    how:
+      `avstår: axel ${axisNote}, blob-elong ${elongation.toFixed(1)}` +
+      (elongation > MAX_CENTROID_ELONGATION
+        ? ' (för lång för tyngdpunkt - vet inte vilken ände som är spetsen)'
+        : ' (rund men skuggtestet kunde inte frikänna den)'),
+  };
+}
