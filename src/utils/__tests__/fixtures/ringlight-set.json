@@ -1,0 +1,48 @@
+{
+  "note": "Kristians utomhustavla 2026-09-12 ~17:40, dagsljus plus en belysningsring runt tavlan. Samma stativläge, samma hårdvaruzoom (2.1x) och samma kamera (1080x1920) i alla bilder - de är alltså direkt jämförbara pixel för pixel. Syftet är att kunna utveckla FÄRGbaserad diff offline: Kristians pilar har silvrigt skaft och svart vinge, och silver mot tavlans gräddvita fält har nästan ingen luminanskontrast. Se dart-detection-status-minnet.",
+  "setup": {
+    "video_size": [1080, 1920],
+    "hardware_zoom": 2.1,
+    "board_diameter_px_approx": 840,
+    "px_per_mm_approx": 2.47,
+    "lighting": "dagsljus i skugga under tak + belysningsring runt tavlan",
+    "dart_type": "svart vinge, silvrigt skaft (Kristians 'bästa' pilar)"
+  },
+  "caveat_jpeg": "Bilderna är JPEG (q=0.92), som subsamplar krominans spatialt (4:2:0). Skaftet är ~10 px brett, så krominansen finns kvar men i halv upplösning. Ett resultat som fungerar på dessa bilder fungerar alltså MINST lika bra i appen, som läser full 4:4:4 RGB från canvas. Konservativ riktning.",
+  "images": [
+    {
+      "file": "board-empty-ringlight.jpg",
+      "shows": "Tom tavla. REFERENSBILDEN - alla diffar räknas mot den.",
+      "truth": null
+    },
+    {
+      "file": "dart-silver-shaft-on-cream.jpg",
+      "shows": "En pil vars SKAFT ligger över det gräddvita 20-fältet. Felfallet: skaftet försvinner ur gråskalediffen, bara den svarta vingen blir kvar som blob.",
+      "truth": "20 (inre svarta fältet enligt Kristian)",
+      "app_read": "S18@143mm/43°",
+      "app_read_correct": false,
+      "blob": { "bbox": [117, 113], "elongation": 1.4, "axis": null, "method": "tyngdpunkt" },
+      "why_wrong": "Blobben är bara vingen. Vingens tyngdpunkt ligger ~40 mm utanför spetsen, vilket ger grannsektor på fel radie."
+    },
+    {
+      "file": "dart-silver-shaft-on-black.jpg",
+      "shows": "Samma pil, men placerad så att skaftet fortsätter ut över dubbelringen och tavlans SVARTA ram. Kontrollfallet som fungerar.",
+      "truth": "20 (yttre svarta fältet enligt Kristian)",
+      "app_read": "S20@131mm/357°",
+      "app_read_correct": true,
+      "blob": { "bbox": [255, 162], "elongation": 2.6, "axis": { "confidence": 0.61, "elongation": 3.5 }, "method": "axel" },
+      "why_right": "Hela pilen kom med i masken, så axelmetoden kunde anpassa pilens axel och hitta den smala änden."
+    }
+  ],
+  "the_experiment": "dart-silver-shaft-on-cream.jpg mot dart-silver-shaft-on-black.jpg är ett kontrollerat A/B-par: samma pil, samma ljus, samma kamera, bara olika underlag för skaftet. Visa att |delta krominans| (t.ex. R-B) hittar skaftet i BÅDA bilderna där |delta luminans| bara hittar det i den andra - då är färghypotesen bevisad mot verkliga pixlar.",
+  "still_missing": [
+    "Pil i röda bullen (DB). Kristian satte en och appen rapporterade EB (yttre bull, 25) - men telefonens batteri dog innan bilden kunde fångas. Se open_questions.",
+    "Pil i grön 25 nära en sektorgräns (det ursprungliga felet från morgonen, fortfarande overifierat)",
+    "Två pilar som överlappar, spetsarna ~2 cm isär men den enas kropp framför den andras spets (för att utveckla avslöjandelogiken offline)",
+    "Arm i bild framför tavlan (artefaktfallet)",
+    "En pil ur den andra uppsättningen (röd vinge, svart spets) över ett gräddvitt fält, för att mäta färgberoendet i stället för att gissa"
+  ],
+  "open_questions": [
+    "DB lästes som EB (25) sent i sessionen, medan samma sorts handplacerade pil läste DB@2mm och DB@6mm tidigare samma dag. Mellan dessa tillfällen laddades appen om och kalibrerades om flera gånger. Misstanke: kalibreringen, inte detekteringen. Måste verifieras med en fixturbild."
+  ]
+}

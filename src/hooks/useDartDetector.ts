@@ -163,6 +163,17 @@ export const useDartDetector = (
       if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
     };
 
+    /**
+     * ?debug&mask ritar ut SJÄLVA maskbilden (tröskad rådiff) på
+     * vision-canvasen i stället för tavelöverlägget, och lämnar den kvar.
+     * Utan att se masken går det inte att avgöra om ett tunt silverskaft
+     * saknas helt, ligger i fragment eller finns men inte är största konturen
+     * - och att gissa på det har kostat oss flera varv.
+     */
+    const maskMode =
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('mask');
+
     /** Omskrivande rektangel för senast granskade blob, satt av findDartTip. */
     let lastBlobRect: { x: number; y: number; width: number; height: number } | null = null;
 
@@ -245,6 +256,13 @@ export const useDartDetector = (
     // (tavlan slutar vid 170). Syns skaftet blir blobben avlång i stället, och
     // då tar axelmetoden över - den läste conf 0.77 och rätt fält på den pil
     // där hela kroppen syntes.
+    // 10, inte lägre. PROVAT 2026-09-12: tröskel 6 gjorde INTE skaftet synligt
+    // (blobben blev fortfarande bara vingen, bbox 124x140, elong 1.6) men tog
+    // antalet konturer i masken från 20-53 till 1778 och dTop från ~10 000 till
+    // 188 000. Problemet med silverskaft över tavlans gräddvita fält är alltså
+    // inte tröskeln - informationen finns i bilden men tappas någon annanstans
+    // i kedjan (morfologi, blur eller gråskalekonverteringen). Sänk inte igen
+    // utan att först titta på maskbilden: ?debug&mask ritar ut den.
     const RAW_DIFF_THRESHOLD = 10;
 
     // Uppstartsspärr: när spelet startar rör sig ofta användaren fortfarande i
@@ -342,6 +360,29 @@ export const useDartDetector = (
      * Returnerar null + sätter `lastAnalysis` om inget dög.
      */
     const findDartTip = (threshMat: any, reference: any, frameArea: number): TipFind | null => {
+      if (maskMode && debugCanvasRef.current) {
+        // FÖRE morfologin: visar vad tröskeln faktiskt gav. Data-URL:en läses
+        // ut SYNKRONT direkt efteråt, för React återställer canvasens
+        // width/height vid nästa rendering (JSX har width={800}) och suddar
+        // det OpenCV ritat - canvasen var 800x800 och tom när vi försökte
+        // hämta den i efterhand.
+        try {
+          cv.imshow(debugCanvasRef.current, threshMat);
+          (window as any).__lastMask = debugCanvasRef.current.toDataURL('image/png');
+          (window as any).__lastMaskAt = new Date().toISOString();
+        } catch {
+          /* diagnostik, inte kritisk */
+        }
+      }
+      // PROVAT 2026-09-12 och backat: CLOSE före OPEN med 7x7-kärna, på
+      // hypotesen att skaftet var fragmenterat (maskbilden visar att det
+      // tonar bort mot spetsen). Det gav ingen förbättring - blobben blev
+      // fortfarande bara vingen i felfallet - och tog antalet konturer från
+      // 59-116 till 519-532. Orsaken visade sig vara en annan: skaftet är
+      // inte fragmenterat utan HELT FRÅNVARANDE när det ligger över tavlans
+      // ljusa fält, för silver mot gräddvitt har nästan ingen
+      // luminanskontrast. Morfologi kan knyta ihop bitar men inte skapa det
+      // som aldrig kom med i masken. Se CLAUDE.md om färgkontrast.
       cv.morphologyEx(threshMat, threshMat, cv.MORPH_OPEN, kernel);
       cv.morphologyEx(threshMat, threshMat, cv.MORPH_CLOSE, kernel);
 
@@ -699,7 +740,8 @@ export const useDartDetector = (
         cv.rectangle(warped, new cv.Point(5, 5), new cv.Point(BOARD_PX - 5, BOARD_PX - 5), new cv.Scalar(0, 0, 255, 255), 10);
       }
 
-      if (debugCanvasRef.current) cv.imshow(debugCanvasRef.current, warped);
+      // I maskläge äger findDartTip canvasen - skriv inte över masken.
+      if (debugCanvasRef.current && !maskMode) cv.imshow(debugCanvasRef.current, warped);
     };
 
     const processFrame = () => {
