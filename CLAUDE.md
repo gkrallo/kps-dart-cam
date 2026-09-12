@@ -502,6 +502,20 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    inte en principiell gräns utan gammal kalibrering plus dåligt ljus.
    **Kvar att verifiera:** bullträffar från riktiga KAST (inte handplacerade),
    och gränsfallet 25 nära en sektorgräns som var det ursprungliga felet.
+1b. **Kamerafixen vid appbyte är verifierad på hårdvara** (2026-09-12): hem-
+   skärmen i 6 s och tillbaka, videon rullade vidare efteråt. Utan fixen låg
+   `video.paused` kvar som true medan React och rAF-loopen gick vidare, så
+   appen analyserade en frusen bildruta utan att något såg fel ut.
+
+1c. **Avslöjande av dolda pilar har en inbyggd gräns: `MIN_DART_SPACING_PX`.**
+   En avslöjad pil förkastas om spetsen ligger inom 30 px (~13 mm) från en
+   redan registrerad - spärren finns för att en uttagen pils "hål" annars
+   registreras en gång till. Men två pilar som smälter till en kontur sitter
+   ofta just så tätt. Funktionen fungerar därför bara när pilarnas SPETSAR är
+   mer än ~15 mm isär medan den ena pilens KROPP skymmer den andras spets
+   sett från kameran. Det är det vanliga verkliga fallet, men den tätaste
+   varianten (spets mot spets) går inte att lösa med positionsspärren kvar.
+
 2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
    dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en
    pil som satt dold bakom en annan kan avslöjas och sättas in i efterhand när
