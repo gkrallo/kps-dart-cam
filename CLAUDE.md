@@ -333,7 +333,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 |---|---|---|---|
 | `motionThreshold` | 3000 | `App.tsx` | Ärvd från POC. Reglerbar i UI:t. Antal skilda pixlar av 640 000 i den warpade bilden. Handhållen kamera överskrider den konstant, därför krävs stativ. |
 | Rörelsetröskel | 30 | `useDartDetector` | Ärvd. Gråvärdesskillnad för movement/baseline (warpad bild, `baselineNoise`/`movementNoise`). |
-| Analyströskel | 15 | `useDartDetector` | Ärvd. Gråvärdesskillnad i **rå** bild (`rawNoise`) - lägre för att fånga hela pilens form. |
+| Analyströskel | 10 | `useDartDetector` (`RAW_DIFF_THRESHOLD`) | **Uppmätt av oss** (sänkt från 15) 2026-09-12: Kristians pilar har silvrigt skaft och svart vinge, och silver mot tavlans gräddvita fält ligger under 15 gråvärden. Då föll skaftet ur masken och bara vingen blev kvar - en kompakt blob vars tyngdpunkt gav fel fält (en 4:a lästes som T13). Vid 10 kom hela pilen med i 2 av 3 kast. Kostnad: fler konturer i masken (38 → 491), men med belysningsring föll det till 11. |
 | `baselineNoise` | > 500 | `useDartDetector` | Ärvd. Gränsen för "något har tillkommit" som gör att STABILIZING→ANALYZING triggas. |
 | Stabiliseringstid | 500 ms | `useDartDetector` | Ärvd. Rimlig — en pil landar och står still. |
 | Uppstartsspärr | 2000 ms | `useDartDetector` (`STARTUP_GRACE_MS`) | **Tillagd av oss**, uppmätt: användaren rör sig ofta fortfarande i bild direkt efter "Starta spel", och den skillnaden tolkades som en pil. |
@@ -342,9 +342,11 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Skuggtest: korrelation | ≥ 0,75 | `shadowTest.ts` | **Satt av oss**, verifierat mot syntetiska skuggor över en renderad tavla (`shadowTest.test.ts`), ej mot hårdvara. En skugga låter tavlans mönster lysa igenom (`cur ≈ k · base`), en pil ersätter ytan och korrelationen kollapsar. |
 | Skuggtest: lutning | 0,15–0,95 (och > 1,05 = reflex) | `shadowTest.ts` | **Satt av oss.** Under 0,15 är ytan nästan svart oavsett underlag = föremål, inte skugga. 0,95–1,05 är ingen ljusändring värd namnet. |
 | Skuggtest: minsta underlagsstruktur | sd ≥ 6 gråvärden | `shadowTest.ts` | **Satt av oss.** Enfärgat underlag ger inget mönster att korrelera mot - då svarar testet "vet inte" och pilen behålls. Säkra riktningen. |
-| Konfidenstak (axelmetoden) | > 0,4 | `useDartDetector` (`detectDartAxisTip().confidence`) | **Uppmätt av oss** (höjd från 0,15): riktiga kast låg på 0,55–0,75 över tre testrundor, artefakter (armkant/skugga) på 0,20–0,23. Tomt gap däremellan. |
+| Konfidenstak (axelmetoden) | > 0,33 | `dartTip.ts` (`MIN_AXIS_CONFIDENCE`) | **Uppmätt av oss.** Var 0,15, höjdes till 0,4 (riktiga kast 0,55–0,75, artefakter 0,20–0,23), sänktes till 0,33 den 2026-09-12: en kraftigt lutad pil i bullen mätte **0,43** och låg alltså under det tidigare intervallet, medan dagens artefakter (arm i bildkanten) låg på 0,09–0,23. Gapet går numera mellan 0,23 och 0,43. |
 | `elongation`, axelmetoden | 2–12 | `useDartDetector` (`MAX_ELONGATION`) | Nedre gräns (2) ärvd. Övre gräns (12) **tillagd av oss**, uppmätt: en spindeltråd/tavelkant/skuggrand mätte 24:1, riktiga kast 2,6–4,4. |
-| `elongation`, tyngdpunktsmetoden (frontal pil) | 2,5–5 | `useDartDetector` | **Satt av oss**, uppmätt: en frontal pil är en kompakt klump. Två artefakter på elong 9–11 slank igenom med det gamla taket 2,5–∞. |
+| `elongation`, tyngdpunktsmetoden (frontal pil) | ≤ 3 (utan golv om skuggtestet frikänt blobben) | `dartTip.ts` (`MAX_CENTROID_ELONGATION`) | **Uppmätt av oss.** Taket var 5: dagens artefakter låg på elong 3,3, 3,8 och 4,3 med konfidens 0,09–0,15 och släpptes alltså igenom som "frontal pil" - de räddades bara av radiespärren. Tyngdpunkten är dessutom garanterat fel i en lång blob; den sitter mitt på pilkroppen. Golvet var 2,5 utifrån en gissning att en frontal pil mäter 2,5–4; uppmätt gav tre raka kast 1,2/1,4/1,6, så golvet är borta men kräver att skuggtestet aktivt frikänt blobben. |
+| Kandidater per analys | 5 största inom areafönstret | `useDartDetector` (`MAX_CANDIDATES`) | **Uppmätt av oss** 2026-09-12. Förut prövades bara den STÖRSTA konturen. Är handen kvar i bild - alltid vid handplacering, ofta när en pil just landat - är armen större än pilen, så armen valdes, förkastades, och pilen bredvid fick aldrig prövas. |
+| Rimlig spetsradie | ≤ 190 mm | `useDartDetector` (`MAX_PLAUSIBLE_RADIUS_MM`) | **Uppmätt av oss.** Tavlan slutar vid 170 mm; en pil i omgivningen läser 170–185. Uppmätt bortom det: vingar på 210 och 242 mm, armar på 273–292 mm. Att registrera sådant som MISS är tyst fel i både poäng och pilräkning. |
 | Dubbeldetekterings-spärr | 1000 ms **och** 30 px (~13 mm) från senast registrerade pil | `useDartDetector` (`MIN_DART_SPACING_PX`) | **Tillagd av oss**: samma pil registrerades om medan den svängde in sig efter landning. |
 | Texturtröskel | stddev < 38 | `boardDetector` | Ärvd. Ska sålla bort släta ytor (väggar, tyg) vid tavledetektering. |
 | HoughCircles | dp=1, minDist=minRadius, param1=100, param2=30 | `boardDetector` | Ärvd. param2=30 är lågt och ger många falska cirklar. |
@@ -490,20 +492,16 @@ Se `AGENT.md` för detaljer och planerad lösning. Kort. (Uppdaterat sep 2026
 efter de första riktiga testomgångarna på Kristians tavla — se
 [[dart-detection-status]].)
 
-1. **Bull-precision.** Sektorträffar i normalzonen läses rätt efter
-   loupe-kalibreringen, men en pil i grön 25 nära en sektorgräns lästes som en
-   sektor nästan mitt emot. Sektorerna konvergerar vid centrum, så ett par mm
-   kalibreringsfel som är osynligt vid dubbelringen kan slå fel helt nära
-   bullen. En offline-simulering (perturberade kalibreringsklick genom
-   `homography.ts`/`syntheticBoard.ts`) bekräftar mönstret: redan ±2 px
-   klickfel ger felaktig 25/sektor-gräns, ±8 px kan flippa bull till fel
-   sektor helt. Ett extra viktat "peka ut bullens mitt"-korrespondenspar
-   hjälpte INTE konsekvent i simuleringen (kan göra outer-ring sämre om
-   bull-klicket har egen brus) - **prioritera i stället att prova
-   ellipsbaserad `autoDetectBoardEllipse` (redan `< 1,5 mm` radiellt fel i
-   `boardEllipse.test.ts`) i stället för fyra manuella klick**, den är
-   strukturellt mycket mer robust mot bullens precision eftersom den passar
-   en ellips mot hela ringen, inte fyra punkter.
+1. **Bull-precision — LÖST 2026-09-12, men bara verifierad med handplacerade
+   pilar.** Var den stora blockeraren: en röd bull lästes som `25@13mm`.
+   Efter omkalibrering (rotationen rättad för hand), belysningsring runt
+   tavlan och sänkt analyströskel läser samma pil `DB@2mm`. Experimentet som
+   avgjorde saken: samma pil mitt i DB med vingen vänd olika håll gav
+   `DB@2mm/19°` respektive `DB@6mm/193°` - alltså är spetsdetekteringen inte
+   riktningsberoende, och DB skiljs från 25 som Farfar kräver. De 13 mm var
+   inte en principiell gräns utan gammal kalibrering plus dåligt ljus.
+   **Kvar att verifiera:** bullträffar från riktiga KAST (inte handplacerade),
+   och gränsfallet 25 nära en sektorgräns som var det ursprungliga felet.
 2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
    dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en
    pil som satt dold bakom en annan kan avslöjas och sättas in i efterhand när
