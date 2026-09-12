@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2, Play } from 'lucide-react';
+import { Plus, Trash2, Play, HelpCircle } from 'lucide-react';
 import type { CreateMatchOptions } from '../game/match';
 import type { GameMode } from '../game/types';
 
@@ -12,9 +12,10 @@ const MODES: { id: GameMode; label: string; sub: string }[] = [
 interface Props {
   onStart: (opts: CreateMatchOptions) => void;
   onSkip?: () => void;
+  onHelpClick?: () => void;
 }
 
-export function GameSetup({ onStart, onSkip }: Props) {
+export function GameSetup({ onStart, onSkip, onHelpClick }: Props) {
   const [mode, setMode] = useState<GameMode>('501');
   const [names, setNames] = useState<string[]>(['Spelare 1', 'Spelare 2']);
   const [doubleOut, setDoubleOut] = useState(false);
@@ -113,6 +114,15 @@ export function GameSetup({ onStart, onSkip }: Props) {
         >
           <Play className="w-5 h-5" /> Starta spel
         </button>
+
+        {onHelpClick && (
+          <button
+            onClick={onHelpClick}
+            className="flex items-center justify-center gap-1.5 text-xs text-blue-300 hover:text-blue-200 py-1"
+          >
+            <HelpCircle className="w-3.5 h-3.5" /> Hjälp och tips
+          </button>
+        )}
 
         {onSkip && (
           <button onClick={onSkip} className="text-xs text-slate-500 hover:text-slate-300 py-1">

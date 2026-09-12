@@ -60,6 +60,15 @@ describe('toStored / fromStored', () => {
     expect(toStored(QUAD, { width: 1920, height: 1080 })!.aspect).toBeCloseTo(16 / 9, 6);
   });
 
+  it('sparar zoomen punkterna mättes vid', () => {
+    // Utan zoomen blir en återställd kalibrering tyst helt fel: punkterna
+    // mättes inzoomat men kameran startar på 1x. Se StoredCalibration.zoom.
+    expect(toStored(QUAD, CONTAINER, 2.07)!.zoom).toBeCloseTo(2.07, 6);
+    // Utan angiven zoom ska fältet inte finnas alls, så gamla sparade
+    // kalibreringar går att skilja från "sparad vid 1x".
+    expect('zoom' in toStored(QUAD, CONTAINER)!).toBe(false);
+  });
+
   it('returnerar null för fel antal punkter eller tom container', () => {
     expect(toStored(QUAD.slice(0, 3), CONTAINER)).toBeNull();
     expect(toStored(QUAD, { width: 0, height: 400 })).toBeNull();

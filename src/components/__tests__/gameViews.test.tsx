@@ -4,7 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { GameSetup } from '../GameSetup';
 import { Scoreboard } from '../Scoreboard';
 import { ThrowEditor } from '../ThrowEditor';
-import { createMatch, matchState, throwDart } from '../../game/match';
+import { TurnHistory } from '../TurnHistory';
+import { HelpPanel } from '../HelpPanel';
+import { createMatch, matchState, throwDart, endTurn } from '../../game/match';
 
 /**
  * Rök-test: en renderpass utan att krascha. Ingen DOM behövs
@@ -100,5 +102,73 @@ describe('spelvyer renderar utan att krascha', () => {
     );
     expect(html).toContain('Runda 1');
     expect(html).toContain('/ 15'); // mål runda 1
+  });
+
+  it('Scoreboard - varning när färre pilar lästes av än turen rymmer', () => {
+    const m = createMatch({ mode: '501', players: [{ name: 'Anna' }] });
+    throwDart(m, { v: 20, m: 1 });
+    const html = renderToStaticMarkup(
+      createElement(Scoreboard, {
+        match: matchState(m),
+        hasEndTurn: true,
+        onUndo: noop,
+        onFinishTurn: noop,
+        onEditThrow: noop,
+        onDeleteThrow: noop,
+        onNewGame: noop,
+        isCalibrated: true,
+        onCalibrateClick: noop,
+        detectorState: 'CLEARED',
+        motionThreshold: 3000,
+        onThresholdChange: noop,
+        debugCanvasRef: canvasRef,
+        missedDarts: { playerName: 'Anna', read: 2, expected: 3 },
+        onHistoryClick: noop,
+      }),
+    );
+    expect(html).toContain('2 av 3 pilar');
+    expect(html).toContain('Lägg till');
+  });
+
+  it('HelpPanel', () => {
+    const html = renderToStaticMarkup(createElement(HelpPanel, { onClose: noop }));
+    expect(html).toContain('omvänd ordning');
+  });
+
+  it('TurnHistory - grupperar kast i turer över flera spelare', () => {
+    const m = createMatch({ mode: '501', players: [{ name: 'Anna' }, { name: 'Bo' }] });
+    throwDart(m, { v: 20, m: 3 });
+    throwDart(m, { v: 20, m: 3 });
+    throwDart(m, { v: 1, m: 1 });
+    endTurn(m);
+    throwDart(m, { v: 19, m: 2 });
+    const html = renderToStaticMarkup(
+      createElement(TurnHistory, {
+        match: matchState(m),
+        onEditThrow: noop,
+        onDeleteThrow: noop,
+        onInsertThrow: noop,
+        onClose: noop,
+      }),
+    );
+    expect(html).toContain('Anna');
+    expect(html).toContain('Bo');
+    expect(html).toContain('T20');
+    expect(html).toContain('D19');
+    expect(html).toContain('121p'); // Annas tur: 60 + 60 + 1
+  });
+
+  it('TurnHistory - tom match kraschar inte', () => {
+    const m = createMatch({ mode: 'FARFAR', players: [{ name: 'Anna' }] });
+    const html = renderToStaticMarkup(
+      createElement(TurnHistory, {
+        match: matchState(m),
+        onEditThrow: noop,
+        onDeleteThrow: noop,
+        onInsertThrow: noop,
+        onClose: noop,
+      }),
+    );
+    expect(html).toContain('Inga kast ännu');
   });
 });

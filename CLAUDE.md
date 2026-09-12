@@ -93,6 +93,9 @@ src/
     GameSetup.tsx             Välj spelläge (301/501/Farfar) + spelare
     Scoreboard.tsx            Spelpanel (aktiv spelare, poäng, tur), detektorstatus
     ThrowEditor.tsx           Knappsats för att rätta en avläst pil
+    TurnHistory.tsx           Turer bakåt: rätta, ta bort, lägga till missad pil
+    HelpPanel.tsx             Hjälptexter (kalibrering, uttagning, rättning)
+    RetrievalTip.tsx          Engångstips: dra ut pilarna i omvänd ordning
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
@@ -113,6 +116,7 @@ src/
     boardEllipse.ts           Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts          Autodetektering: ellipsmetod + HoughCircles-fallback
     dartTip.ts                Spetsdetektering: axelanpassning (PCA) + breddtest
+    shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
     calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
     syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
@@ -263,13 +267,43 @@ rå gråskala → absdiff mot rå baseline → tröskel → morfologi → störs
 
 Därefter sätts nya baselines (warpad + rå) så nästa pil syns som en ny skillnad.
 
-**Tavla-tömd → spelarbyte.** En tredje referensbild (`emptyBaseline`, den tomma
-tavlan vid speluppstart) används bara till detta: när en stabil bildruta är
-nästan identisk med den tomma tavlan igen, och minst en pil hunnit registreras,
-har någon dragit ur pilarna. För 301/501 avslutas turen (`endTurn`), en ton
-spelas och nästa spelares namn läses upp. Farfar avslutar turen själv i motorn.
-`absdiff` kan inte skilja "något dök upp" från "något försvann", men "är tavlan
-tom igen?" är en enklare fråga som den klarar.
+**Tavla-tömd → spelarbyte.** En långlivad referensbild (`emptyBaseline`, den
+tomma tavlan vid speluppstart) används som säkerhetsnät: när en stabil bildruta
+är nästan identisk med den igen, och minst en pil hunnit registreras, tvingas
+en total återställning fram oavsett vad den stegvisa uttagningslogiken (nedan)
+kom fram till under vägs. För 301/501 avslutas turen (`endTurn`), en ton spelas
+och nästa spelares namn läses upp. Farfar avslutar turen själv i motorn.
+
+**Omvänd uttagning avslöjar dolda pilar (tillagt 2026-09-11).** `useDartDetector`
+håller en STACK av rå-bilder (`snapshots`), en nivå per pil som registrerats
+den här omgången (nivå 0 = tom tavla). Varje ny stabil bildruta jämförs mot
+BÅDA de två översta nivåerna, inte bara toppen som tidigare:
+
+```
+diff mot toppen (dTop)       → mer skillnad = nytt kast, oförändrad logik
+diff mot nivån under (dBase) → mindre skillnad än dTop = en pil drogs UR
+```
+
+`absdiff` är symmetriskt - den bryr sig inte om något tillkom eller försvann -
+så en uttagning som inte hanteras särskilt skulle annars gå genom exakt samma
+kod som ett nytt kast och riskera att registreras som ett spökkast (skillnaden
+"pilhålet" ser ofta ut som en avlång blob, precis som en riktig pil). Genom att
+jämföra mot BÅDA nivåerna kan koden skilja "mer material" (nytt kast) från
+"mindre material" (uttagning) - och inom uttagning, skilja en REN uttagning
+(bilden matchar nivån under nästan exakt) från en uttagning som avslöjar en
+DOLD pil (bilden skiljer sig fortfarande, för att en till pil satt bakom den
+just borttagna - känt problem, se "sammanslagna pilar" i listan nedan). I det
+senare fallet körs samma formanalys (PCA-axel, elongation, konfidens) som för
+ett vanligt kast, fast på resten-diffen mot den äldre nivån, och en ny
+`onHiddenDartRevealed(tip)`-callback sätter in kastet på RÄTT plats i
+kastlistan (`insertThrow` i `game/match.ts`) - före den pil som just drogs ut,
+inte sist. `App.tsx` räknar ut var med en enkel räknare
+(`removedSinceClearRef`, nollställd i `handleBoardCleared`) eftersom pilar
+alltid dras i turordning (sist kastad ut först) - se `RetrievalTip`/`HelpPanel`
+för hur det förklaras för spelaren. Idén är samma som konkurrenten Darteer.ai:s
+instruktion "dra ut pilarna i omvänd ordning" - se minnesanteckningen
+`correction-and-readout-wishlist`. Otestat på riktig hårdvara, se
+[[pending-test-checklist]].
 
 ### Trösklar och parametrar — var ärlig om vad de är värda
 
@@ -291,6 +325,9 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Uppstartsspärr | 2000 ms | `useDartDetector` (`STARTUP_GRACE_MS`) | **Tillagd av oss**, uppmätt: användaren rör sig ofta fortfarande i bild direkt efter "Starta spel", och den skillnaden tolkades som en pil. |
 | Baseline-drift | 15 s helt orörd, `baselineNoise` < 120 & `movementNoise` < 200 | `useDartDetector` | **Justerad av oss** (från 4 s) - för snabb ätit en pil som ännu inte hunnit analyseras. |
 | Konturarea (rå bild) | 0,02–2,5 % av bildytan | `useDartDetector` (`minArea`/`maxArea`) | **Uppmätt av oss**: riktiga kast från stativet mätte 7 000–19 000 px i en 1080×1920-bild (≈0,3–1 %). maxArea sänkt från 5 % → 2,5 % sedan en arm vid pilhämtning (~80 000 px) annars räknades som pil. |
+| Skuggtest: korrelation | ≥ 0,75 | `shadowTest.ts` | **Satt av oss**, verifierat mot syntetiska skuggor över en renderad tavla (`shadowTest.test.ts`), ej mot hårdvara. En skugga låter tavlans mönster lysa igenom (`cur ≈ k · base`), en pil ersätter ytan och korrelationen kollapsar. |
+| Skuggtest: lutning | 0,15–0,95 (och > 1,05 = reflex) | `shadowTest.ts` | **Satt av oss.** Under 0,15 är ytan nästan svart oavsett underlag = föremål, inte skugga. 0,95–1,05 är ingen ljusändring värd namnet. |
+| Skuggtest: minsta underlagsstruktur | sd ≥ 6 gråvärden | `shadowTest.ts` | **Satt av oss.** Enfärgat underlag ger inget mönster att korrelera mot - då svarar testet "vet inte" och pilen behålls. Säkra riktningen. |
 | Konfidenstak (axelmetoden) | > 0,4 | `useDartDetector` (`detectDartAxisTip().confidence`) | **Uppmätt av oss** (höjd från 0,15): riktiga kast låg på 0,55–0,75 över tre testrundor, artefakter (armkant/skugga) på 0,20–0,23. Tomt gap däremellan. |
 | `elongation`, axelmetoden | 2–12 | `useDartDetector` (`MAX_ELONGATION`) | Nedre gräns (2) ärvd. Övre gräns (12) **tillagd av oss**, uppmätt: en spindeltråd/tavelkant/skuggrand mätte 24:1, riktiga kast 2,6–4,4. |
 | `elongation`, tyngdpunktsmetoden (frontal pil) | 2,5–5 | `useDartDetector` | **Satt av oss**, uppmätt: en frontal pil är en kompakt klump. Två artefakter på elong 9–11 slank igenom med det gamla taket 2,5–∞. |
@@ -453,17 +490,37 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    `boardEllipse.test.ts`) i stället för fyra manuella klick**, den är
    strukturellt mycket mer robust mot bullens precision eftersom den passar
    en ellips mot hela ringen, inte fyra punkter.
-2. **Uttagning av pilar** ger fortfarande potentiellt spökkast om en enskild
-   pil dras ut och sätts tillbaka (bara hela-tavlan-tömd hanteras idag, se
-   `emptyBaseline`). Kristians idé: dra ut fel pil, håll handen ur bild ≥2 s,
-   sätt tillbaka - då kan appen läsa om just den positionen. Ospikat.
-3. **Sammanslagna pilar** blir en kontur och ger en spets.
-4. **Parallax** (mätt): en kamera räcker bara med spetsdetektering i råbilden
+2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
+   dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en
+   pil som satt dold bakom en annan kan avslöjas och sättas in i efterhand när
+   pilarna dras i omvänd ordning. **Otestat på riktig hårdvara.** Kristians
+   ursprungsidé (dra ut fel pil, håll handen ur bild ≥2 s, sätt tillbaka för
+   att läsa om just den positionen) är fortfarande inte byggd - kvarstår som
+   fallback om den nya logiken inte räcker till, eller för att rätta en pil
+   som lästes fel utan att vara dold.
+3. **Sammanslagna pilar** blir fortfarande en kontur och ger en spets NÄR de
+   kastas (oförändrat) - men om de går isär till två synliga pilar vid
+   uttagning fångas den andra nu upp där (se punkt 2). Tre eller fler pilar
+   sammanslagna i en enda kontur är fortfarande inte hanterat. Missas en pil
+   helt säger appen till vid turslut ("bara 2 av 3 pilar avlästa", både på
+   skärmen och uppläst) och den går att fylla i via `TurnHistory`.
+4. **Skuggor** förkastas nu av `shadowTest.ts` när underlaget har struktur att
+   korrelera mot. Ligger fläcken mitt i ett enfärgat fält svarar testet "vet
+   inte" och släpper igenom den - då är det bara form- och konfidenstesterna
+   som gäller, som förut.
+5. **Add-vs-remove-heuristiken** (`dBase < dTop` i `useDartDetector`) är en
+   ren pixelräkning. När pilarna är ungefär lika stora i bild är den nära ett
+   myntkast, och en dold pil hittas då inte alls (ingen felaktig ställning -
+   bara utebliven rättning). Den robusta lösningen är positionsbaserad
+   avstämning: håll en RÅ referens av tom tavla, hitta alla pilformade
+   konturer mot den och matcha mot kända spetsar - omatchad blob = oregistrerad
+   pil, känd spets utan blob = uttagen pil. Inte byggt.
+6. **Parallax** (mätt): en kamera räcker bara med spetsdetektering i råbilden
    (finns nu) eller två kameror. Ett kvarvarande fel på några mm är oundvikligt
    med en kamera när pilen lutar mycket.
-5. **`?debug`-instrumenteringen** i `useDartDetector.ts` (fps, gray/baseline-
+7. **`?debug`-instrumenteringen** i `useDartDetector.ts` (fps, gray/baseline-
    checksummor, `grabDiag`) är kvar från felsökningen av clone()-buggen. Ta
    bort när bull-precisionen är löst och inga fler djupdykningar behövs.
 
-Nästa planerade steg: bull-precision (auto-kalibrera), tap-to-correct i
-Vision View, enskild pil-korrigering (dra ut/sätt tillbaka).
+Nästa planerade steg: bull-precision (auto-kalibrera), positionsbaserad
+avstämning (punkt 5), tap-to-correct i Vision View.

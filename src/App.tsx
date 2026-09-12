@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Loader2, Camera, Eye } from 'lucide-react';
+import { Loader2, Camera, Eye, HelpCircle } from 'lucide-react';
 import { CameraFeed } from './components/CameraFeed';
 import { useOpenCV } from './hooks/useOpenCV';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
@@ -10,9 +10,14 @@ import { getScoreFromPixel } from './utils/dartMath';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { segFromDartScore } from './game';
-import { engineFor, matchState } from './game/match';
+import { engineFor, matchState, insertIndexForMissedThrow } from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
+import { HelpPanel } from './components/HelpPanel';
+import { RetrievalTip } from './components/RetrievalTip';
+import { TurnHistory } from './components/TurnHistory';
+
+const RETRIEVAL_TIP_SEEN_KEY = 'kps-dart-cam:retrieval-tip-seen';
 
 export default function App() {
   const { isLoaded, isLoading, error, cv } = useOpenCV();
@@ -33,8 +38,22 @@ export default function App() {
   const [lastScoredDartLabel, setLastScoredDartLabel] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'live' | 'vision'>('live');
   const [showSetup, setShowSetup] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showRetrievalTip, setShowRetrievalTip] = useState(false);
+  const [missedDarts, setMissedDarts] = useState<
+    { playerName: string; read: number; expected: number } | null
+  >(null);
 
-  const { match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow } = useMatch();
+  const {
+    match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow,
+  } = useMatch();
+
+  // Antal rena uttagningar bekräftade sen tavlan senast var full (nollställs
+  // vid `handleBoardCleared`). Behövs för att räkna ut VAR i kastlistan en
+  // pil som avslöjas vid uttagning (se `handleHiddenDartRevealed`) ska sättas
+  // in - se kommentaren i useDartDetector.ts vid `snapshots`.
+  const removedSinceClearRef = useRef(0);
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
@@ -66,6 +85,10 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const st = throwSeg(segFromDartScore(scoreObj));
 
+    // Nästa tur är igång - varningen om förra turens missade pil är inte
+    // aktuell längre (den går alltid att nå via Turer).
+    setMissedDarts(null);
+
     audioEngine.playDartHitSound();
     audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
 
@@ -90,6 +113,9 @@ export default function App() {
   }, [throwSeg]);
 
   const handleBoardCleared = useCallback(() => {
+    // Ny omgång med uttagningar börjar om nästa gång tavlan töms igen.
+    removedSinceClearRef.current = 0;
+
     if (!match) return;
     const st = matchState(match);
     const engine = engineFor(match.config);
@@ -105,12 +131,57 @@ export default function App() {
       if (!v.win) {
         audioEngine.speak(v.bust ? `${st.active.name}: tjock, poängen räknas inte.` : `${st.active.name}: ${v.total} poäng. ${v.remaining} kvar.`);
       }
+
+      // Färre avlästa pilar än turen rymmer, utan att turen tog slut av sig
+      // själv (utgång eller tjock)? Då missade avläsningen en pil. Säg till
+      // direkt - spelaren står vid tavlan och ser inte skärmen, och tyst fel
+      // ställning är värre än en extra tillsägelse.
+      const read = st.currentDarts.length;
+      const expected = v.available;
+      if (!v.win && !v.bust && read < expected) {
+        setMissedDarts({ playerName: st.active.name, read, expected });
+        audioEngine.speak(`Obs: bara ${read} av ${expected} pilar avlästa.`);
+      }
+
       finishTurn();
       audioEngine.playSwitchSound();
       const next = st.players[(st.currentIndex + 1) % st.players.length];
       if (next) audioEngine.speak(`${next.name}s tur`);
     }
+
+    // Visa tipset om omvänd uttagning tills spelaren stänger det själv (se
+    // RetrievalTip/HelpPanel). Dyker upp EFTER att pilarna redan dragits ur,
+    // så det aldrig stör själva spelet - bara en påminnelse inför nästa tur.
+    try {
+      if (typeof localStorage !== 'undefined' && !localStorage.getItem(RETRIEVAL_TIP_SEEN_KEY)) {
+        setShowRetrievalTip(true);
+      }
+    } catch {
+      /* privat surfning m.m. */
+    }
   }, [match, finishTurn]);
+
+  const handleDartRemoved = useCallback(() => {
+    removedSinceClearRef.current += 1;
+  }, []);
+
+  const handleHiddenDartRevealed = useCallback((pt: Point) => {
+    // Är matchen avgjord tar motorn ändå inte emot kastet (canThrow → false),
+    // och då blir det bara en död post i listan plus ett förvirrande
+    // "dold pil hittades" efter att någon redan vunnit.
+    if (!match || matchState(match).finished) return;
+    const scoreObj = getScoreFromPixel(pt.x, pt.y);
+    const seg = segFromDartScore(scoreObj);
+
+    // Den dolda pilen kastades precis före den pil som just drogs ut - se
+    // insertIndexForMissedThrow för hur platsen räknas fram.
+    insertMissingThrow(insertIndexForMissedThrow(match.actions, removedSinceClearRef.current), seg);
+
+    audioEngine.playDartHitSound();
+    audioEngine.speak(`Dold pil hittades: ${scoreObj.label}, ${scoreObj.totalPoints} poäng.`);
+    setLastScoredDartLabel(`Dold: ${scoreObj.label}`);
+    window.setTimeout(() => setLastScoredDartLabel(null), 3000);
+  }, [match, insertMissingThrow]);
 
   const handleDebugState = useCallback((info: DetectorDebug) => {
     setDetectorState(info.state);
@@ -127,6 +198,8 @@ export default function App() {
     handleDartDetected,
     handleDebugState,
     handleBoardCleared,
+    handleHiddenDartRevealed,
+    handleDartRemoved,
     debugMode,
   );
 
@@ -194,7 +267,7 @@ export default function App() {
   const hasEndTurn = match ? engineFor(match.config).hasEndTurn : true;
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
+    <div className="relative flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
       {/* Header. Titeln visas bara efter kalibrering: under kalibreringen ligger
           CalibrationOverlays eget knapprad (Auto-Kalibrera m.fl.) i exakt samma
           hörn (top-3 left-3) och låg i samma z-lager som headern - texten och
@@ -237,6 +310,20 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {/* Bara efter kalibrering: CalibrationOverlays egen knapprad ligger i
+              samma z-lager (z-20) men senare i DOM, så den ritas ÖVER headern
+              och gömde knappen här under kalibreringen. Under kalibreringen
+              nås hjälpen i stället från GameSetup-skärmen. */}
+          {isCalibrated && (
+            <button
+              onClick={() => setShowHelp(true)}
+              aria-label="Hjälp"
+              title="Hjälp och tips"
+              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/90 border border-blue-500/40 text-blue-300 hover:text-white hover:border-blue-400 shadow-lg"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+          )}
           {isLoaded ? (
             <span className="flex h-3 w-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.8)]" title="OpenCV Datorseende Aktivt" />
           ) : (
@@ -244,6 +331,21 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {showHelp && <HelpPanel onClose={() => setShowHelp(false)} />}
+
+      {showHistory && state && (
+        <TurnHistory
+          match={state}
+          onEditThrow={editThrow}
+          onDeleteThrow={deleteThrow}
+          onInsertThrow={insertMissingThrow}
+          onClose={() => {
+            setShowHistory(false);
+            setMissedDarts(null);
+          }}
+        />
+      )}
 
       {/* Main Viewport Container */}
       <main className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
@@ -303,6 +405,19 @@ export default function App() {
           </div>
         )}
 
+        {showRetrievalTip && (
+          <RetrievalTip
+            onDismiss={() => {
+              setShowRetrievalTip(false);
+              try {
+                localStorage.setItem(RETRIEVAL_TIP_SEEN_KEY, '1');
+              } catch {
+                /* privat surfning m.m. */
+              }
+            }}
+          />
+        )}
+
         {/* Game Setup */}
         {isCalibrated && showSetup && (
           <GameSetup
@@ -312,6 +427,7 @@ export default function App() {
               audioEngine.unlock();
             }}
             onSkip={match ? () => setShowSetup(false) : undefined}
+            onHelpClick={() => setShowHelp(true)}
           />
         )}
 
@@ -351,6 +467,10 @@ export default function App() {
         debugCanvasRef={debugCanvasRef}
         viewMode={viewMode}
         onToggleViewMode={() => setViewMode((p) => (p === 'live' ? 'vision' : 'live'))}
+        onHelpClick={() => setShowHelp(true)}
+        onHistoryClick={() => setShowHistory(true)}
+        missedDarts={missedDarts}
+        onDismissMissedDarts={() => setMissedDarts(null)}
       />
     </div>
   );

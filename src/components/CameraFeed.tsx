@@ -35,6 +35,8 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Först när videon levererar bildrutor är det säkert att röra zoomen. */
+  const [videoReady, setVideoReady] = useState(false);
 
   const syncSize = useCallback(() => {
     if (!containerRef.current) return;
@@ -92,6 +94,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
             video.play().catch(() => undefined);
             onVideoReady?.(video);
             syncSize();
+            setVideoReady(true);
           };
         }
       } catch (err) {
@@ -114,10 +117,61 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     };
   }, [onVideoReady, onZoomCapability, syncSize]);
 
-  // Hårdvaruzoom
+  // Android Chrome PAUSAR videoelementet när appen går i bakgrunden (byte till
+  // annan app, skärmen slocknar) och återupptar det INTE när man kommer
+  // tillbaka. Strömmen mår bra - spåret är "live", omutat och aktivt, och
+  // video.readyState är 4 - men `paused` är true, så detektorn analyserar
+  // samma frusna bildruta i evighet och ingen pil kan hittas. Appen ser
+  // levande ut (React och rAF-loopen går som vanligt), vilket gör felet
+  // extra lömskt. Uppmätt på Kristians S25 2026-09-12: efter ett appbyte
+  // stod video.currentTime helt still medan rAF gick i 60 fps.
+  //
+  // Skärmlåset håller dessutom skärmen tänd, så att fallet inte uppstår bara
+  // för att telefonen lämnas i stativet mellan turerna.
+  useEffect(() => {
+    const video = videoRef.current;
+    let lock: { released?: boolean; release?: () => Promise<void> } | null = null;
+
+    const resume = () => {
+      const v = videoRef.current;
+      if (v && v.paused) v.play().catch(() => undefined);
+    };
+
+    const acquireLock = async () => {
+      try {
+        const wl = (navigator as any).wakeLock;
+        if (wl) lock = await wl.request('screen');
+      } catch {
+        // Nekas bl.a. när sidan är i bakgrunden. Inte kritiskt.
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      resume();
+      if (!lock || lock.released) void acquireLock();
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    video?.addEventListener('pause', resume);
+    void acquireLock();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      video?.removeEventListener('pause', resume);
+      void lock?.release?.().catch(() => undefined);
+    };
+  }, []);
+
+  // Hårdvaruzoom. Väntar på att videon FAKTISKT levererar bildrutor:
+  // applyConstraints på ett spår som ännu inte hunnit starta låser strömmen
+  // på Galaxy S25 - `track.readyState` blir "live" men videoelementet står
+  // kvar på readyState 0, `play()` returnerar ett promise som aldrig löses,
+  // och bilden är svart. Uppmätt 2026-09-12 när en sparad kalibrering började
+  // återställa zoomen direkt vid uppstart.
   useEffect(() => {
     const track = videoTrackRef.current;
-    if (!track) return;
+    if (!track || !videoReady) return;
     const caps: any = track.getCapabilities?.() ?? {};
     if (!caps.zoom) return;
 
@@ -125,7 +179,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     track
       .applyConstraints({ advanced: [{ zoom: target } as any] })
       .catch((err) => console.warn('Hårdvaruzoom misslyckades:', err));
-  }, [zoomLevel]);
+  }, [zoomLevel, videoReady]);
 
   if (error) {
     return (

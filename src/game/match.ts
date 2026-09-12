@@ -2,6 +2,7 @@ import type {
   Engine,
   GameMode,
   Match,
+  MatchAction,
   MatchConfig,
   MatchState,
   Seg,
@@ -157,6 +158,40 @@ export function replaceThrow(match: Match, actionIndex: number, dart: Seg): Matc
   if (actionIndex < 0 || actionIndex >= match.actions.length) return matchState(match);
   match.actions[actionIndex] = { t: 'T', v: dart.v, m: dart.m };
   return bump(match);
+}
+
+/**
+ * Sätter in ett kast som saknades i kastlistan (t.ex. en pil som satt dold
+ * bakom en annan och först hittades när pilarna drogs ut i omvänd ordning -
+ * se `onHiddenDartRevealed` i `useDartDetector`). Till skillnad från
+ * `throwDart` går kastet in på en given plats i listan, inte sist, så
+ * turordningen blir rätt även om den avslöjade pilen egentligen kastades
+ * före ett redan registrerat kast.
+ */
+export function insertThrow(match: Match, actionIndex: number, dart: Seg): MatchState {
+  const at = Math.max(0, Math.min(actionIndex, match.actions.length));
+  match.actions.splice(at, 0, { t: 'T', v: dart.v, m: dart.m });
+  return bump(match);
+}
+
+/**
+ * Var ska en pil som hittades vid uttagning sättas in? Pilar dras sist-först,
+ * så när `removedCount` pilar redan dragits ur är den vi just tog bort kast
+ * nummer `removedCount + 1` bakifrån - den dolda pilen kastades precis före
+ * det, alltså på samma index.
+ *
+ * Räknar bara 'T'-poster: avslutas turen manuellt med "Nästa" lägger motorn
+ * en 'E' sist i listan, och räknas den som ett kast hamnar insättningen ett
+ * steg fel (och därmed i fel tur).
+ */
+export function insertIndexForMissedThrow(actions: MatchAction[], removedCount: number): number {
+  let seen = 0;
+  for (let i = actions.length - 1; i >= 0; i--) {
+    if (actions[i].t !== 'T') continue;
+    if (seen === removedCount) return i;
+    seen++;
+  }
+  return 0;
 }
 
 export function serializeMatch(match: Match) {

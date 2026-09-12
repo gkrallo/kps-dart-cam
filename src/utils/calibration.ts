@@ -23,15 +23,30 @@ export interface StoredCalibration {
   points: { fx: number; fy: number }[];
   savedAt: number;
   aspect: number;
+  /**
+   * Hårdvaruzoomen punkterna mättes vid. MÅSTE återställas tillsammans med
+   * punkterna: zoomen beskär kamerabilden, så samma punkt på skärmen svarar
+   * mot helt olika ställen på tavlan vid 1x och 2x. Utan detta återställdes
+   * punkterna från en inzoomad kalibrering medan kameran gick tillbaka till
+   * 1x, och kalibreringen blev tyst helt fel (uppmätt på Kristians telefon
+   * 2026-09-12: Sikte-steget valde 2.07x, en omladdning gav 1x).
+   * Optionell - kalibreringar sparade före det här fältet saknar den.
+   */
+  zoom?: number;
 }
 
 /** Punkter i container-pixlar -> lagringsform. */
-export function toStored(points: Point[], container: ContainerSize): StoredCalibration | null {
+export function toStored(
+  points: Point[],
+  container: ContainerSize,
+  zoom?: number,
+): StoredCalibration | null {
   if (points.length !== 4 || container.width <= 0 || container.height <= 0) return null;
   return {
     points: points.map((p) => ({ fx: p.x / container.width, fy: p.y / container.height })),
     savedAt: Date.now(),
     aspect: container.width / container.height,
+    ...(zoom !== undefined ? { zoom } : {}),
   };
 }
 
@@ -58,9 +73,9 @@ function storage(): Storage | null {
   }
 }
 
-export function saveCalibration(points: Point[], container: ContainerSize): void {
+export function saveCalibration(points: Point[], container: ContainerSize, zoom?: number): void {
   const s = storage();
-  const data = toStored(points, container);
+  const data = toStored(points, container, zoom);
   if (!s || !data) return;
   try {
     s.setItem(STORAGE_KEY, JSON.stringify(data));

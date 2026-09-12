@@ -58,15 +58,33 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [isZoomingToBoard, setIsZoomingToBoard] = useState(false);
   const [siktStatus, setSiktStatus] = useState<string | null>(null);
 
+  // Föregående zoomnivå, för att skala punkterna när användaren zoomar.
+  const prevZoomRef = useRef(zoomLevel);
+
   // Initialize points only once when dimensions are available. Om en kalibrering
   // finns sparad sedan tidigare återställs den - annars en centrerad ring.
   useEffect(() => {
     if (points.length === 0 && containerWidth > 0 && containerHeight > 0) {
       const container = { width: containerWidth, height: containerHeight };
-      const restored = (() => {
-        const stored = loadCalibration();
-        return stored ? fromStored(stored, container) : null;
-      })();
+      const stored = loadCalibration();
+      const restored = stored ? fromStored(stored, container) : null;
+      // Zoomen tillhör kalibreringen: punkterna mättes vid den, och utan att
+      // återställa den pekar de på helt fel ställen på tavlan. Se
+      // StoredCalibration.zoom.
+      if (restored && stored?.zoom !== undefined) {
+        // Punkterna skalas INTE här: de mättes redan vid den här zoomen. Bara
+        // reglaget skalar punkter (handleZoomSliderChange).
+        //
+        // Ingen koll mot `zoomCapability.supported`: den kommer från kameran
+        // via onZoomCapability och hinner inte fram innan den här effekten
+        // kör (den triggas av containerns storlek, som är klar långt
+        // tidigare). Med kollen hoppades zoomen tyst över och kalibreringen
+        // återställdes mot 1x - uppmätt 2026-09-12. CameraFeed klampar ändå
+        // mot kamerans verkliga gränser och struntar i värdet om zoom inte
+        // stöds, så det är ofarligt att alltid skicka det.
+        prevZoomRef.current = stored.zoom;
+        onZoomChange?.(stored.zoom);
+      }
 
       const cx = containerWidth / 2;
       const cy = containerHeight / 2;
@@ -142,6 +160,10 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       const target = Math.min(zoomCapability.max, Math.max(zoomCapability.min, zoomLevel * factor));
 
       setSiktStatus('Zoomar in mot tavlan...');
+      // Punkterna skalas inte heller här - de detekteras om efter zoomen
+      // nedan. prevZoomRef måste ändå följa med, annars räknar nästa drag i
+      // reglaget sin faktor från fel utgångsläge.
+      prevZoomRef.current = target;
       onZoomChange(target);
 
       // Kamerans hårdvaruzoom (och autoexponering som ställer om sig efter
@@ -180,7 +202,8 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
   const handleSaveCalibration = () => {
     if (points.length === 4 && containerWidth > 0 && containerHeight > 0) {
-      saveCalibration(points, { width: containerWidth, height: containerHeight });
+      // Zoomen måste med - se kommentaren vid StoredCalibration.zoom.
+      saveCalibration(points, { width: containerWidth, height: containerHeight }, zoomLevel);
     }
     onSaveCalibration?.();
   };
@@ -265,32 +288,37 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     setTimeout(() => setDetectStatus(null), 3000);
   };
 
-  // Track previous zoom level to scale points when zoom changes
-  const prevZoomRef = useRef(zoomLevel);
-
-  useEffect(() => {
+  /**
+   * Användaren drog i zoomreglaget: hårdvaruzoomen beskär bilden kring mitten,
+   * så punkterna måste följa med utåt/inåt för att fortsätta peka på samma
+   * ställen på tavlan.
+   *
+   * Det här satt förut i en `useEffect` på `zoomLevel`, men det gick inte att
+   * skilja "användaren zoomade" från "zoomen återställdes med en sparad
+   * kalibrering" - och i det senare fallet ÄR punkterna redan mätta vid den
+   * zoomen. Effekten skalade dem en andra gång, och eftersom React hann
+   * rendera mellan `setPoints` och propen som kom tillbaka gick det inte att
+   * neutralisera med en "föregående zoom"-ref: rescale-effekten skrev över
+   * den på mellanrenderingen. Uppmätt 2026-09-12: alla fyra punkter hamnade
+   * 2.07x för långt ut efter en omladdning. Skalningen hör till handlingen,
+   * inte till propens värde.
+   */
+  const handleZoomSliderChange = (next: number) => {
     const oldZoom = prevZoomRef.current;
-    if (
-      zoomCapability?.supported &&
-      oldZoom !== zoomLevel &&
-      points.length === 4 &&
-      containerWidth > 0 &&
-      containerHeight > 0
-    ) {
+    if (points.length === 4 && containerWidth > 0 && containerHeight > 0 && oldZoom > 0) {
       const cx = containerWidth / 2;
       const cy = containerHeight / 2;
-      const factor = zoomLevel / oldZoom;
-
+      const factor = next / oldZoom;
       const scaledPoints = points.map((p) => ({
         x: (p.x - cx) * factor + cx,
         y: (p.y - cy) * factor + cy,
       }));
-
       setPoints(scaledPoints);
       onPointsChange(scaledPoints);
     }
-    prevZoomRef.current = zoomLevel;
-  }, [zoomLevel, containerWidth, containerHeight]);
+    prevZoomRef.current = next;
+    onZoomChange?.(next);
+  };
 
   // Förstoringsglas medan man drar en punkt: fingret skymmer själva pixeln man
   // försöker pricka, så en cirkulär ~3x-inzoomning ritas ovanför fingret med ett
@@ -430,7 +458,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
                 max={zoomCapability.max}
                 step={zoomCapability.step}
                 value={zoomLevel}
-                onChange={(e) => onZoomChange(Number(e.target.value))}
+                onChange={(e) => handleZoomSliderChange(Number(e.target.value))}
                 className="w-32 sm:w-48 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
               />
               <span className="font-mono text-blue-400 font-bold text-xs">{zoomLevel.toFixed(1)}x</span>
@@ -704,7 +732,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
               max={zoomCapability.max}
               step={zoomCapability.step}
               value={zoomLevel}
-              onChange={(e) => onZoomChange(Number(e.target.value))}
+              onChange={(e) => handleZoomSliderChange(Number(e.target.value))}
               className="w-16 sm:w-24 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
             <span className="font-mono text-blue-400 font-bold text-xs">{zoomLevel.toFixed(1)}x</span>

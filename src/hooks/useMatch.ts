@@ -7,6 +7,7 @@ import {
   undo,
   removeThrow,
   replaceThrow,
+  insertThrow,
   serializeMatch,
   restoreMatch,
   type CreateMatchOptions,
@@ -101,8 +102,17 @@ export function useMatch() {
     [bump],
   );
 
+  const insertMissingThrow = useCallback(
+    (actionIndex: number, seg: Seg) => {
+      if (!ref.current) return;
+      insertThrow(ref.current, actionIndex, seg);
+      bump();
+    },
+    [bump],
+  );
+
   const match = ref.current;
   const state: MatchState | null = match ? matchState(match) : null;
 
-  return { match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow };
+  return { match, state, start, quit, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow };
 }

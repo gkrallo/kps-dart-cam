@@ -1,7 +1,8 @@
 import { RefObject, useEffect, useRef } from 'react';
 import { Point } from '../types';
-import { BOARD_MM, BOARD_PX, PX_PER_MM } from '../utils/dartMath';
+import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../utils/dartMath';
 import { detectDartAxisTip } from '../utils/dartTip';
+import { classifyShadow, type BlobSample } from '../utils/shadowTest';
 
 /** Ringradier i den warpade bilden, härledda ur de officiella mm-måtten. */
 const RING_PX = {
@@ -24,6 +25,12 @@ export interface DetectorDebug {
   lastAnalysis?: string;
 }
 
+/** Resultatet av att leta pilform i en tröskad diffbild. */
+interface TipFind {
+  tip: Point;
+  how: string;
+}
+
 export const useDartDetector = (
   cv: any,
   videoElement: HTMLVideoElement | null,
@@ -35,6 +42,14 @@ export const useDartDetector = (
   onDebugState?: (info: DetectorDebug) => void,
   /** Anropas när tavlan blivit tömd på pilar igen (efter minst en detekterad pil). */
   onBoardCleared?: () => void,
+  /**
+   * Anropas när en tidigare okänd pil upptäcks medan pilarna dras ur (se
+   * kommentaren vid `snapshots` nedan). Ska sättas in FÖRE den senast kastade
+   * pilen i turordningen, inte sist.
+   */
+  onHiddenDartRevealed?: (tip: Point) => void,
+  /** Anropas vid varje bekräftad, ren uttagning (ingen dold pil avslöjades). */
+  onDartRemoved?: () => void,
   /** Loggar utförligt till konsolen. Styrs av ?debug i URL:en. */
   debug = false,
 ) => {
@@ -44,12 +59,16 @@ export const useDartDetector = (
   const onDartDetectedRef = useRef(onDartDetected);
   const onDebugStateRef = useRef(onDebugState);
   const onBoardClearedRef = useRef(onBoardCleared);
+  const onHiddenDartRevealedRef = useRef(onHiddenDartRevealed);
+  const onDartRemovedRef = useRef(onDartRemoved);
   const motionThresholdRef = useRef(motionThreshold);
   const debugRef = useRef(debug);
   useEffect(() => {
     onDartDetectedRef.current = onDartDetected;
     onDebugStateRef.current = onDebugState;
     onBoardClearedRef.current = onBoardCleared;
+    onHiddenDartRevealedRef.current = onHiddenDartRevealed;
+    onDartRemovedRef.current = onDartRemoved;
     motionThresholdRef.current = motionThreshold;
     debugRef.current = debug;
   });
@@ -79,22 +98,75 @@ export const useDartDetector = (
     const rawGray = new cv.Mat();
     const rawDiff = new cv.Mat();
     const rawThresh = new cv.Mat();
+    // Diff mot NIVÅN UNDER toppen av `snapshots` - se kommentaren där.
+    const baseDiff = new cv.Mat();
+    const baseThresh = new cv.Mat();
     const emptyDiff = new cv.Mat();
     const emptyThresh = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-    // Referensbilderna. VIKTIGT: uppdatera dem med `gray.copyTo(baseline)`, ALDRIG
-    // `baseline = gray.clone()`. I den här OpenCV.js-byggen delar `Mat.clone()`
-    // databufferten med källan (verifierat: clonens pixlar ändras när källan
-    // ändras) - så en klonad baseline blev i praktiken samma bild som `gray`,
-    // `absdiff` gav alltid 0 och ingen pil kunde detekteras. `copyTo` kopierar
-    // på riktigt.
+    // Referensbilderna (warpad bild, motion-grinden). VIKTIGT: uppdatera dem
+    // med `gray.copyTo(baseline)`, ALDRIG `baseline = gray.clone()`. I den här
+    // OpenCV.js-byggen delar `Mat.clone()` databufferten med källan (verifierat:
+    // klonens pixlar ändras när källan ändras) - så en klonad baseline blev i
+    // praktiken samma bild som `gray`, `absdiff` gav alltid 0 och ingen pil
+    // kunde detekteras. `copyTo` kopierar på riktigt. Samma regel gäller alla
+    // Mat:er i `snapshots` nedan.
     const baseline = new cv.Mat();
     const previous = new cv.Mat();
-    const rawBaseline = new cv.Mat();
-    // Referensbild av den TOMMA tavlan (vid speluppstart). Används bara för att
-    // avgöra när tavlan blivit tömd på pilar igen -> automatiskt spelarbyte.
+    // Referensbild av den TOMMA tavlan (vid speluppstart). Långlivad - rör sig
+    // bara vid den långsamma drift-uppdateringen längst ner. Används dels för
+    // "är tavlan tom?"-kollen (spelarbyte), dels som säkerhetsnät: hittar den
+    // stegvisa uttagningslogiken (se `snapshots`) på fel spår, tvingar den här
+    // jämförelsen ändå fram en total återställning så fort tavlan verkligen är
+    // tom, så bokföringen aldrig kan bli permanent fel.
     const emptyBaseline = new cv.Mat();
-    let dartsSinceClear = 0;
+
+    // Stack av råbilder, en per pil som registrerats den här omgången (index 0
+    // = tavlan tom). `snapshots[i]` = hur tavlan såg ut precis efter att den
+    // i:e pilen registrerades (eller drogs ut/avslöjades - se nedan).
+    //
+    // Poängen: när pilarna dras ur känns en RIKTIG pil-i-taget-uttagning igen
+    // på att bilden går TILLBAKA till ett tidigare snapshot i stacken, inte
+    // fram mot ett nytt. Ett vanligt nytt kast går längre bort från toppen av
+    // stacken (mer skiljer sig); en uttagning går närmare nivån UNDER toppen
+    // (mindre skiljer sig). Två sammanslagna pilar (samma kontur, en spets -
+    // känt problem, se CLAUDE.md) registreras bara som EN nivå här trots att
+    // två pilar fysiskt sitter i tavlan. Dras den som syns (den som kastades
+    // sist, alltså överst i stacken) ut och det fortfarande skiljer sig
+    // ordentligt mot nivån under - då satt en till pil dold bakom den. Den
+    // "avslöjas": vi letar pilform i det som skiljer sig mot den äldre
+    // nivån och sätter in den som ett kast FÖRE den precis borttagna pilen
+    // (se `onHiddenDartRevealed`, `insertThrow` i match.ts). Det här är
+    // samma idé som konkurrenten Darteers instruktion "dra ut pilarna i
+    // omvänd ordning" - se minnesanteckningen `correction-and-readout-wishlist`.
+    let snapshots: any[] = [];
+    const pushSnapshot = () => {
+      const snap = new cv.Mat();
+      rawGray.copyTo(snap);
+      snapshots.push(snap);
+    };
+    const popSnapshot = () => {
+      const snap = snapshots.pop();
+      snap?.delete();
+    };
+    /**
+     * Tar upp den aktuella bilden i toppnivån UTAN att ändra antalet pilar.
+     * Körs när en förändring analyserats men inte var en pil (skugga, hand,
+     * ljusskifte, förkastad blob). Gör man inte det ligger skräpet kvar i
+     * diffen mot toppen för all framtid, och kan bli den största konturen
+     * nästa gång en riktig pil ska hittas - då räknas skuggan som pil i
+     * stället för pilen. Den gamla koden gjorde detta ovillkorligt efter
+     * varje analys (`rawGray.copyTo(rawBaseline)`); med stacken måste det
+     * göras explicit i varje gren som inte redan flyttar en nivå.
+     */
+    const absorbIntoTop = () => {
+      if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
+    };
+    const resetSnapshots = () => {
+      snapshots.forEach((s) => s.delete());
+      snapshots = [];
+      pushSnapshot();
+    };
 
     let rafId = 0;
     let stopped = false;
@@ -106,12 +178,26 @@ export const useDartDetector = (
     let lastEmittedState = '';
     let calmSince = 0; // hur länge scenen varit i stort sett orörd (för baseline-uppdatering)
     let grabDiag = ''; // diagnostiksträng från grabFrame
+    let lastDiag = ''; // siffrorna bakom senaste blobbeslutet (?debug)
     let frameCount = 0;
     let lastRegisterTime = 0; // tidsspärr mot dubbeldetektering av samma pil
 
     // ~13 mm i den warpade bilden (2.3529 px/mm). Under det är "ny pil" troligen
     // samma pil igen.
     const MIN_DART_SPACING_PX = 30;
+
+    // Gråvärdesskillnad som räknas som "här har något ändrats" i RÅBILDEN.
+    //
+    // Var 15 (ärvt från POC:en). Sänkt till 10 efter mätning på Kristians tavla
+    // 2026-09-12: hans pilar har SILVRIGT skaft och SVART vinge, och mot
+    // tavlans gräddvita fält ligger silver-mot-vitt under 15 gråvärden. Då
+    // föll skaftet bort ur masken och bara den svarta vingen blev kvar - en
+    // kompakt blob (elong 1.0-1.1) vars tyngdpunkt sitter långt från spetsen.
+    // Resultat: en 4:a lästes som T13 och en 10:a som MISS på radie 242 mm
+    // (tavlan slutar vid 170). Syns skaftet blir blobben avlång i stället, och
+    // då tar axelmetoden över - den läste conf 0.77 och rätt fält på den pil
+    // där hela kroppen syntes.
+    const RAW_DIFF_THRESHOLD = 10;
 
     // Uppstartsspärr: när spelet startar rör sig ofta användaren fortfarande i
     // bild (tryckte just på "Starta spel"). Referensbilden tas då med rörelse i,
@@ -160,7 +246,7 @@ export const useDartDetector = (
     gray.copyTo(baseline);
     gray.copyTo(previous);
     gray.copyTo(emptyBaseline);
-    rawGray.copyTo(rawBaseline);
+    resetSnapshots();
 
     // Warpar en punkt från rå videokoordinat till 800x800-rummet.
     const warpPoint = (p: Point): Point => {
@@ -175,16 +261,45 @@ export const useDartDetector = (
       }
     };
 
-    const analyseNewBlob = () => {
-      // Bildsubtraktion i RÅ bild - se rawGray ovan.
-      cv.absdiff(rawGray, rawBaseline, rawDiff);
-      cv.threshold(rawDiff, rawThresh, 15, 255, cv.THRESH_BINARY);
-      cv.morphologyEx(rawThresh, rawThresh, cv.MORPH_OPEN, kernel);
-      cv.morphologyEx(rawThresh, rawThresh, cv.MORPH_CLOSE, kernel);
+    /**
+     * Plockar ut (ny bild, referensbild)-par inuti en blobb, för skuggtestet.
+     * Bara pixlar som faktiskt skiljer sig tas med - annars fylls urvalet av
+     * oförändrad bakgrund inne i den avlånga blobbens omskrivande rektangel,
+     * och allt ser ut som "samma yta, annat ljus".
+     */
+    const sampleBlob = (contour: any, reference: any): BlobSample[] => {
+      const rect = cv.boundingRect(contour);
+      const x0 = Math.max(0, rect.x);
+      const y0 = Math.max(0, rect.y);
+      const x1 = Math.min(rawGray.cols, rect.x + rect.width);
+      const y1 = Math.min(rawGray.rows, rect.y + rect.height);
+      const stepX = Math.max(1, Math.floor((x1 - x0) / 60));
+      const stepY = Math.max(1, Math.floor((y1 - y0) / 60));
+      const samples: BlobSample[] = [];
+      for (let y = y0; y < y1; y += stepY) {
+        for (let x = x0; x < x1; x += stepX) {
+          const cur = rawGray.ucharPtr(y, x)[0];
+          const base = reference.ucharPtr(y, x)[0];
+          if (Math.abs(cur - base) > RAW_DIFF_THRESHOLD) samples.push({ cur, base });
+        }
+      }
+      return samples;
+    };
+
+    /**
+     * Letar pilform i en tröskad diffbild (rawThresh eller baseThresh).
+     * `reference` är bilden diffen räknades mot - behövs för skuggtestet.
+     * Samma logik oavsett om diffen kom från ett nytt kast eller en
+     * avslöjad dold pil - en pil ska klara samma krav i båda fallen.
+     * Returnerar null + sätter `lastAnalysis` om inget dög.
+     */
+    const findDartTip = (threshMat: any, reference: any, frameArea: number): TipFind | null => {
+      cv.morphologyEx(threshMat, threshMat, cv.MORPH_OPEN, kernel);
+      cv.morphologyEx(threshMat, threshMat, cv.MORPH_CLOSE, kernel);
 
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
-      cv.findContours(rawThresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
+      cv.findContours(threshMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
 
       let bestIdx = -1;
       let bestArea = 0;
@@ -199,21 +314,24 @@ export const useDartDetector = (
       // Arean är relativ bildstorleken nu (rå bild, inte den fasta 800x800:an).
       // maxArea sänkt till 2.5 %: riktiga kast från stativet mätte 7 000-18 000 px,
       // en arm/hand vid pilhämtning ~80 000 px och slank igenom det gamla 5 %-taket.
-      const frameArea = rawGray.rows * rawGray.cols || 1;
       const minArea = frameArea * 0.0002;
       const maxArea = frameArea * 0.025;
-      const nContours = contours.size();
+
+      let result: TipFind | null = null;
 
       if (bestIdx === -1) {
-        lastAnalysis = `ingen kontur (rå diff för liten)`;
+        lastAnalysis = `ingen kontur (diff för liten)`;
       } else if (bestArea <= minArea) {
         lastAnalysis = `blob för liten: ${bestArea | 0} < ${minArea | 0} px`;
       } else if (bestArea >= maxArea) {
         lastAnalysis = `blob för stor: ${bestArea | 0} > ${maxArea | 0} px (hand/skugga/exponering?)`;
-      }
-
-      if (bestIdx !== -1 && bestArea > minArea && bestArea < maxArea) {
+      } else {
         const contour = contours.get(bestIdx);
+
+        // Skuggtest FÖRE formtestet: en skugga kan mycket väl vara avlång och
+        // klara både elongation och konfidens. Det som avslöjar den är att
+        // tavlans eget mönster lyser igenom - se shadowTest.ts.
+        const lighting = classifyShadow(sampleBlob(contour, reference));
 
         const points: Point[] = [];
         for (let i = 0; i < contour.rows; i++) {
@@ -234,75 +352,262 @@ export const useDartDetector = (
 
         let tipRaw: Point | null = null;
         let how = '';
-        try {
-          const axis = detectDartAxisTip(points, { minElongation: 2 });
-          // Konfidensgräns 0.4: uppmätt på tre testrundor låg riktiga kast på
-          // 0.55-0.75, medan spökkasten (armkant/skugga som råkar bli avlång)
-          // låg på 0.20-0.23. Gapet däremellan är tomt. Gamla gränsen 0.15
-          // släppte igenom en spökpil i början av varje spel.
-          if (axis && axis.elongation > MAX_ELONGATION) {
-            how = `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_ELONGATION} (kant/tråd/skugga, inte pil)`;
-          } else if (axis && axis.confidence > 0.4) {
-            // Axelanpassning + breddtest: fenan är bredare än spetsen.
-            tipRaw = axis.tip;
-            how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
-          } else if (elongation >= 2.5 && elongation <= 5) {
-            // Nästan frontal pil: axeln går inte att lita på. Blobbens
-            // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
-            // Taket är 5, inte MAX_ELONGATION: en frontal pil är en kompakt
-            // klump (~2.5-4). Är blobben 9:1 är den en strimma (kant/skugga),
-            // inte en pil sedd framifrån - två sådana slank igenom tidigare.
-            let mx = 0;
-            let my = 0;
-            for (const p of points) {
-              mx += p.x;
-              my += p.y;
+        let axis: ReturnType<typeof detectDartAxisTip> = null;
+        if (lighting.isLightingOnly) {
+          how = lighting.reason;
+        } else {
+          try {
+            axis = detectDartAxisTip(points, { minElongation: 2 });
+            // Konfidensgräns 0.4: uppmätt på tre testrundor låg riktiga kast på
+            // 0.55-0.75, medan spökkasten (armkant/skugga som råkar bli avlång)
+            // låg på 0.20-0.23. Gapet däremellan är tomt. Gamla gränsen 0.15
+            // släppte igenom en spökpil i början av varje spel.
+            if (axis && axis.elongation > MAX_ELONGATION) {
+              how = `för avlång: elong ${axis.elongation.toFixed(1)} > ${MAX_ELONGATION} (kant/tråd/skugga, inte pil)`;
+            } else if (axis && axis.confidence > 0.4) {
+              // Axelanpassning + breddtest: fenan är bredare än spetsen.
+              tipRaw = axis.tip;
+              how = `axel (conf ${axis.confidence.toFixed(2)}, elong ${axis.elongation.toFixed(1)})`;
+            } else if (elongation <= 5 && (elongation >= 2.5 || lighting.decided)) {
+              // Nästan frontal pil: axeln går inte att lita på. Blobbens
+              // tyngdpunkt duger - parallaxen är liten när pilen pekar mot linsen.
+              // Taket är 5, inte MAX_ELONGATION: är blobben 9:1 är den en
+              // strimma (kant/skugga), inte en pil sedd framifrån - två sådana
+              // slank igenom tidigare.
+              //
+              // Golvet var 2.5, utifrån en gammal gissning att en frontal pil
+              // mäter 2.5-4. FEL: uppmätt på Kristians tavla 2026-09-12 (kamera
+              // nästan rakt framför, pilarna pekar mot linsen) mätte tre raka
+              // kast elong 1.2, 1.4 och 1.6 - alla förkastades, både här och av
+              // axelmetoden (som kräver >= 2). Därför inget golv alls numera,
+              // men bara om skuggtestet AKTIVT frikänt blobben (`decided`): en
+              // rund fläck som vi inte kunde mäta på är för svag grund. De tre
+              // kasten hade r=0.02-0.27 med 1300-4000 punkter, alltså tydligt
+              // föremål och inte ljusskifte.
+              let mx = 0;
+              let my = 0;
+              for (const p of points) {
+                mx += p.x;
+                my += p.y;
+              }
+              tipRaw = { x: mx / points.length, y: my / points.length };
+              how = `tyngdpunkt (elong ${elongation.toFixed(1)})`;
+            } else {
+              how = `förkastad: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) + ' elong ' + axis.elongation.toFixed(1) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} (utanför 2.5-5)`;
             }
-            tipRaw = { x: mx / points.length, y: my / points.length };
-            how = `tyngdpunkt (elong ${elongation.toFixed(1)})`;
-          } else {
-            how = `förkastad: axel ${axis ? 'conf ' + axis.confidence.toFixed(2) + ' elong ' + axis.elongation.toFixed(1) : 'null'}, minAreaRect-elong ${elongation.toFixed(1)} (utanför 2.5-5)`;
+          } catch (err) {
+            console.error('Spetsdetektering misslyckades:', err);
+            how = 'krasch i spetsdetektering';
           }
-        } catch (err) {
-          console.error('Spetsdetektering misslyckades:', err);
-          how = 'krasch i spetsdetektering';
+        }
+
+        // ?debug: siffrorna bakom beslutet. Viktigast är att BÅDA ändarna av
+        // axeln poängsätts - läser appen "inte i närheten av rätt" är den
+        // vanligaste orsaken att fenan valdes som spets, och då står rätt
+        // poäng under `tail`.
+        if (debugRef.current) {
+          const at = (p: Point) => {
+            const w = warpPoint(p);
+            const s = getScoreFromPixel(w.x, w.y);
+            const dx = (w.x - BOARD_PX / 2) * MM_PER_PX;
+            const dy = (w.y - BOARD_PX / 2) * MM_PER_PX;
+            const r = Math.hypot(dx, dy);
+            // Riktningen med: ett SYSTEMATISKT kalibreringsfel förskjuter alla
+            // kast samma väg, medan ett spetsdetekteringsfel sprider sig
+            // slumpmässigt. Utan vinkeln går de två inte att skilja åt.
+            const deg = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+            return `${s.label}@${r.toFixed(0)}mm/${deg.toFixed(0)}°`;
+          };
+          // Blobbens mått avslöjar om HELA pilen kom med eller bara vingen:
+          // en hel pil är ~200x60 px vid den här skalan, en ensam vinge
+          // ~60x50.
+          const bb = cv.boundingRect(contour);
+          lastDiag =
+            `area=${bestArea | 0} bbox=${bb.width}x${bb.height} kont=${contours.size()}` +
+            ` elong=${elongation.toFixed(1)}` +
+            (axis
+              ? ` axel(conf=${axis.confidence.toFixed(2)} elong=${axis.elongation.toFixed(1)}` +
+                ` spets=${at(axis.tip)} fena=${at(axis.tail)} bredd ${axis.tipWidthPx.toFixed(1)}/${axis.tailWidthPx.toFixed(1)})`
+              : ' axel=null') +
+            ` skugga(r=${lighting.correlation.toFixed(2)} k=${lighting.slope.toFixed(2)}` +
+            ` n=${lighting.sampleCount} ${lighting.isLightingOnly ? 'JA' : 'nej'})` +
+            // Den punkt som faktiskt blev poängen, oavsett gren. Utan den går
+            // det inte att felsöka tyngdpunktsgrenen - den saknar spets/fena.
+            (tipRaw ? ` VALT=${at(tipRaw)} raw=${tipRaw.x | 0},${tipRaw.y | 0}` : ' VALT=-');
         }
 
         if (tipRaw) {
-          const tip = warpPoint(tipRaw);
-
-          // Dubbeldetektering: efter att en pil registrerats visade råbilden i
-          // några bildrutor kvarvarande skillnad (pilen svänger in sig, fjädrar)
-          // och samma pil räknades två gånger. Två spärrar:
-          //  - tidsspärr: minst 1 s mellan registreringar.
-          //  - platsspärr: ingen ny pil inom MIN_DART_SPACING_PX av en redan
-          //    registrerad. Två pilar kan sitta tätt men aldrig i exakt samma
-          //    punkt.
-          const nowMs = performance.now();
-          const tooSoon = nowMs - lastRegisterTime < 1000;
-          const tooClose = detectedDartsRef.current.some(
-            (d) => Math.hypot(d.x - tip.x, d.y - tip.y) < MIN_DART_SPACING_PX,
-          );
-
-          if (tooSoon) {
-            lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
-          } else if (tooClose) {
-            lastAnalysis = `pil ignorerad (för nära en redan registrerad, samma pil?)`;
-          } else {
-            lastRegisterTime = nowMs;
-            detectedDartsRef.current.push(tip);
-            dartsSinceClear++;
-            lastAnalysis = `PIL registrerad (${bestArea | 0} px, ${how})`;
-            onDartDetectedRef.current(tip);
-          }
+          result = { tip: tipRaw, how };
         } else {
           lastAnalysis = `blob OK (${bestArea | 0} px) men ${how}`;
         }
       }
 
-      if (debugRef.current) console.log('[analyse]', nContours, 'konturer →', lastAnalysis);
       contours.delete();
       hierarchy.delete();
+      return result;
+    };
+
+    /**
+     * Sitter punkten så nära en redan registrerad pil att det troligen ÄR den?
+     * Används både mot dubbelregistrering av ett kast och mot att en uttagen
+     * pils "hål" (som har samma form och plats som pilen hade) tolkas som en
+     * ny eller avslöjad pil.
+     */
+    const nearKnownDart = (tip: Point) =>
+      detectedDartsRef.current.some(
+        (d) => Math.hypot(d.x - tip.x, d.y - tip.y) < MIN_DART_SPACING_PX,
+      );
+
+    /**
+     * Kastfasen: en ny pil hittad i diffen mot toppen av `snapshots`.
+     * Oförändrad logik mot tidigare, bara flyttad hit.
+     */
+    const registerNewThrow = (found: TipFind) => {
+      const tip = warpPoint(found.tip);
+
+      // Dubbeldetektering: efter att en pil registrerats visade råbilden i
+      // några bildrutor kvarvarande skillnad (pilen svänger in sig, fjädrar)
+      // och samma pil räknades två gånger. Två spärrar:
+      //  - tidsspärr: minst 1 s mellan registreringar.
+      //  - platsspärr: ingen ny pil inom MIN_DART_SPACING_PX av en redan
+      //    registrerad. Två pilar kan sitta tätt men aldrig i exakt samma
+      //    punkt.
+      const nowMs = performance.now();
+      const tooSoon = nowMs - lastRegisterTime < 1000;
+
+      // En spets som warpas till en radie långt utanför tavlan kan inte vara
+      // en spets. Tavlan slutar vid 170 mm; en pil som verkligen sitter i
+      // omgivningen runt tavlan läser 170-185 mm, så taket ligger över det.
+      // Uppmätt 2026-09-12: en T6 lästes som MISS på radie 210 mm och en 10:a
+      // på 242 mm - i båda fallen var blobben bara pilens VINGE, som stack ut
+      // utanför tavlan, och dess tyngdpunkt hamnade utanför kanten. Att
+      // registrera det som MISS är tyst fel: poängen blir 0 och pilräkningen
+      // stämmer ändå inte. Bättre att förkasta och låta varningen "bara 2 av
+      // 3 pilar avlästa" tala om att en pil behöver fyllas i för hand.
+      const radiusMM = Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) * MM_PER_PX;
+      const MAX_PLAUSIBLE_RADIUS_MM = 190;
+
+      if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
+        lastAnalysis = `pil förkastad (spets på radie ${radiusMM | 0} mm, utanför tavlan - troligen bara vingen)`;
+        absorbIntoTop();
+      } else if (tooSoon) {
+        lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
+        absorbIntoTop();
+      } else if (nearKnownDart(tip)) {
+        lastAnalysis = `pil ignorerad (för nära en redan registrerad, samma pil eller dess hål?)`;
+        absorbIntoTop();
+      } else {
+        lastRegisterTime = nowMs;
+        detectedDartsRef.current.push(tip);
+        pushSnapshot();
+        lastAnalysis = `PIL registrerad (${found.how})`;
+        onDartDetectedRef.current(tip);
+      }
+    };
+
+    /** En rad per analys när ?debug är på: vilken gren, med vilka siffror. */
+    const logAnalysis = (branch: string, dTop: number, dBase: number) => {
+      if (!debugRef.current) return;
+      const base = dBase === Infinity ? '-' : `${dBase | 0}`;
+      console.log(
+        `[analyse] ${branch} dTop=${dTop | 0} dBase=${base} pilar=${snapshots.length - 1}` +
+          (lastDiag ? `  ${lastDiag}` : '') +
+          `  → ${lastAnalysis}`,
+      );
+    };
+
+    /**
+     * Något har ändrats sen förra stabila bilden. Avgör om det är ett nytt
+     * kast (mer skiljer sig mot toppen av stacken) eller en uttagning
+     * (mindre skiljer sig - närmare nivån under toppen). Se kommentaren vid
+     * `snapshots`.
+     */
+    const analyseChange = () => {
+      lastDiag = '';
+      const frameArea = rawGray.rows * rawGray.cols || 1;
+      const minArea = frameArea * 0.0002;
+      // "Matchar tydligt, ingen verklig skillnad kvar" - samma tröskel som
+      // gränsen för en för liten pilblob, återanvänd som brusnivå här.
+      const CLEAR_MATCH = minArea;
+
+      const top = snapshots[snapshots.length - 1];
+      cv.absdiff(rawGray, top, rawDiff);
+      cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+      const dTop = cv.countNonZero(rawThresh);
+
+      let dBase = Infinity;
+      const hasBelow = snapshots.length >= 2;
+      const below = hasBelow ? snapshots[snapshots.length - 2] : null;
+      if (below) {
+        cv.absdiff(rawGray, below, baseDiff);
+        cv.threshold(baseDiff, baseThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+        dBase = cv.countNonZero(baseThresh);
+      }
+
+      // Går bilden NÄRMARE nivån under toppen än toppen själv - något drogs
+      // ut, inte till. En pil som just kastats gör tvärtom: går längre bort
+      // från toppen (mer material), aldrig närmare ett äldre snapshot.
+      const removalLikely = hasBelow && dBase < dTop;
+
+      if (removalLikely && dBase < CLEAR_MATCH) {
+        // Ren uttagning: toppilen drogs ut, ingenting nytt syns. En nivå ner.
+        lastAnalysis = `pil uttagen (${snapshots.length - 2} kvar denna omgång)`;
+        popSnapshot();
+        detectedDartsRef.current.pop();
+        onDartRemovedRef.current?.();
+        logAnalysis('UTTAG', dTop, dBase);
+        return;
+      }
+
+      if (removalLikely) {
+        // Toppilen är borta, men skillnaden mot nivån under är för stor för
+        // att vara brus - en pil satt dold bakom den. Leta pilform i det som
+        // fortfarande skiljer sig mot den ÄLDRE nivån.
+        const found = findDartTip(baseThresh, below, frameArea);
+        const tip = found ? warpPoint(found.tip) : null;
+
+        // Tre spärrar innan vi vågar sätta in ett kast i efterhand. Ett
+        // felaktigt insatt kast ändrar ställningen tyst, så hellre missa en
+        // dold pil än hitta på en:
+        //  1. Ingen pilform alls i resten -> troligen skugga/ljusskifte.
+        //  2. Spetsen ligger där en REDAN registrerad pil sitter. Då är det
+        //     pilens eget hål vi ser (samma form, samma plats), eller en pil
+        //     som dragits ut i annan ordning än sist-först. Hände i
+        //     genomgången: dra ut pil 3, sedan pil 1 -> resten mot nivån
+        //     under blev pil 1:s hål och hade registrerats en gång till.
+        //  3. Spetsen ligger utanför tavlan. En dold pil sitter per
+        //     definition bakom en annan pil, alltså i tavlan; en avlång
+        //     fläck ute i väggen är något annat.
+        const outsideBoard =
+          !!tip && Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) > BOARD_PX * 0.55;
+
+        if (tip && !nearKnownDart(tip) && !outsideBoard) {
+          lastAnalysis = `DOLD PIL avslöjad vid uttagning (${found!.how})`;
+          popSnapshot();
+          pushSnapshot(); // nuvarande bild (den avslöjade pilen, ensam) blir nya toppen
+          if (detectedDartsRef.current.length > 0) detectedDartsRef.current.pop();
+          detectedDartsRef.current.push(tip);
+          onHiddenDartRevealedRef.current?.(tip);
+        } else {
+          // Osäkert. Säkraste antagandet är en ren uttagning - annars
+          // riskerar vi att aldrig komma vidare mot tom tavla.
+          // `emptyBaseline`-kollen längre ner fångar upp om det ändå blev fel.
+          const why = !tip ? 'ingen pilform' : outsideBoard ? 'utanför tavlan' : 'redan registrerad pil';
+          lastAnalysis = `pil uttagen, rest ignorerad (${dBase | 0} px, ${why})`;
+          popSnapshot();
+          detectedDartsRef.current.pop();
+          onDartRemovedRef.current?.();
+        }
+        logAnalysis('UTTAG/DOLD', dTop, dBase);
+        return;
+      }
+
+      // Vanligt nytt kast: mer material än toppen av stacken hade.
+      const found = findDartTip(rawThresh, top, frameArea);
+      if (found) registerNewThrow(found);
+      else absorbIntoTop(); // skugga/hand/ljusskifte - se absorbIntoTop
+      logAnalysis('KAST', dTop, dBase);
     };
 
     const drawOverlay = (state: string) => {
@@ -371,6 +676,7 @@ export const useDartDetector = (
 
       const now = performance.now();
       let state = 'STABLE';
+      const dartsThisCycle = snapshots.length - 1;
 
       if (movementNoise > motionThresholdRef.current) {
         lastMotionTime = now;
@@ -385,12 +691,12 @@ export const useDartDetector = (
           isStabilizing = false;
           state = 'ANALYZING';
           if (now - startedAt > STARTUP_GRACE_MS) {
-            analyseNewBlob();
+            analyseChange();
           } else {
             lastAnalysis = 'hoppar över (uppstartsspärr)';
+            absorbIntoTop(); // annars ligger uppstartsrörelsen kvar i diffen
           }
           gray.copyTo(baseline);
-          rawGray.copyTo(rawBaseline);
         } else {
           state = 'STABILIZING';
         }
@@ -399,16 +705,17 @@ export const useDartDetector = (
 
         // Tavlan tömd? Jämför mot den tomma referensbilden. Är den nästan
         // identisk igen, och vi hunnit registrera minst en pil, så har någon
-        // dragit ur pilarna -> spelarbyte. Baseline nollställs så nästa pil
-        // syns som en ny skillnad.
-        if (dartsSinceClear > 0) {
+        // dragit ur pilarna -> spelarbyte. Säkerhetsnät oavsett vad den
+        // stegvisa uttagningslogiken i analyseChange() kom fram till (se
+        // kommentaren vid `snapshots`): tvingar alltid en total återställning
+        // när tavlan verkligen är tom.
+        if (dartsThisCycle > 0) {
           cv.absdiff(gray, emptyBaseline, emptyDiff);
           cv.threshold(emptyDiff, emptyThresh, 30, 255, cv.THRESH_BINARY);
           if (cv.countNonZero(emptyThresh) < 400) {
-            dartsSinceClear = 0;
             detectedDartsRef.current = [];
+            resetSnapshots();
             gray.copyTo(baseline);
-            rawGray.copyTo(rawBaseline);
             calmSince = 0;
             state = 'CLEARED';
             lastAnalysis = 'tavlan tömd → spelarbyte';
@@ -426,8 +733,8 @@ export const useDartDetector = (
           if (calmSince === 0) calmSince = now;
           else if (now - calmSince > 15000) {
             gray.copyTo(baseline);
-            rawGray.copyTo(rawBaseline);
-            if (dartsSinceClear === 0) gray.copyTo(emptyBaseline);
+            if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
+            if (dartsThisCycle === 0) gray.copyTo(emptyBaseline);
             calmSince = now;
             if (debugRef.current) console.log('[det] baseline uppdaterad (drift)');
           }
@@ -447,13 +754,15 @@ export const useDartDetector = (
         let bs = 0;
         for (let i = 200000; i < 210000 && i < gray.data.length; i++) gs += gray.data[i];
         for (let i = 200000; baseline && i < 210000 && i < baseline.data.length; i++) bs += baseline.data[i];
-        // Rå diff (samma kedja som analyseNewBlob använder): ser råbilden pilen?
-        cv.absdiff(rawGray, rawBaseline, rawDiff);
-        cv.threshold(rawDiff, rawThresh, 15, 255, cv.THRESH_BINARY);
+        // Rå diff mot toppen av pilstacken (samma referens som analyseChange
+        // använder): ser råbilden pilen?
+        const top = snapshots[snapshots.length - 1];
+        cv.absdiff(rawGray, top, rawDiff);
+        cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
         const rawNoise = cv.countNonZero(rawThresh);
         console.log(
           `[det] ${state}  baselineNoise=${baselineNoise}  movementNoise=${movementNoise}  rawNoise=${rawNoise}` +
-            `  fps≈${fps}  grayΣ=${gs} baselineΣ=${bs}  ${grabDiag}` +
+            `  darts=${dartsThisCycle}  fps≈${fps}  grayΣ=${gs} baselineΣ=${bs}  ${grabDiag}` +
             (lastAnalysis ? `  senaste: ${lastAnalysis}` : ''),
         );
       }
@@ -483,9 +792,10 @@ export const useDartDetector = (
       // saknades i den gamla cleanupen och läckte två 800x800-bilder per kast.
       [
         warped, gray, diff, thresh, diffPrev, threshPrev,
-        rawGray, rawDiff, rawThresh, emptyDiff, emptyThresh,
-        kernel, baseline, previous, rawBaseline, emptyBaseline,
+        rawGray, rawDiff, rawThresh, baseDiff, baseThresh, emptyDiff, emptyThresh,
+        kernel, baseline, previous, emptyBaseline,
       ].forEach((m) => m?.delete());
+      snapshots.forEach((m) => m?.delete());
     };
   }, [cv, videoElement, transformMatrix, isActive, debugCanvasRef]);
 };

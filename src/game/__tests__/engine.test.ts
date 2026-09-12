@@ -8,6 +8,8 @@ import {
   undo,
   removeThrow,
   replaceThrow,
+  insertThrow,
+  insertIndexForMissedThrow,
 } from '../match';
 import { farfarEngine, targetFor } from '../farfar';
 import type { GameMode, Match } from '../types';
@@ -123,6 +125,47 @@ describe('301 / 501', () => {
     removeThrow(m, first.ai);
     expect(player(m, 'A').score).toBe(381);
     expect(player(m, 'A').dartsThrown).toBe(2);
+  });
+
+  it('sätter in en pil som saknades (dold bakom en annan, hittad vid uttagning)', () => {
+    const m = mk('501', ['A', 'B']);
+    t(m, 20, 3); // dart 1 - egentligen dolde den en 5:a bakom sig
+    t(m, 1, 1); // dart 3, registrerad som index 1
+    // dart 2 (en 5:a) saknas helt - upptäcks vid omvänd uttagning och sätts
+    // in FÖRE den sist kastade pilen (index 1), inte sist i listan.
+    insertThrow(m, 1, { v: 5, m: 1 });
+    expect(matchState(m).view.remaining).toBe(501 - 60 - 5 - 1);
+    expect(matchState(m).currentDarts.map((d) => d.v)).toEqual([20, 5, 1]);
+  });
+
+  describe('plats för en pil som hittas vid uttagning', () => {
+    const T = { t: 'T' as const, v: 20, m: 1 };
+    const E = { t: 'E' as const };
+
+    it('inga uttagna pilar än: före det senaste kastet', () => {
+      expect(insertIndexForMissedThrow([T, T, T], 0)).toBe(2);
+    });
+
+    it('en pil redan uttagen: ett kast längre bak', () => {
+      expect(insertIndexForMissedThrow([T, T, T], 1)).toBe(1);
+    });
+
+    it('hoppar över turbytet när turen avslutats manuellt med "Nästa"', () => {
+      // [T T T E] - 'E' är inget kast och får inte räknas som ett, då hade
+      // insättningen hamnat ett steg fel (och i fel tur).
+      expect(insertIndexForMissedThrow([T, T, T, E], 0)).toBe(2);
+      expect(insertIndexForMissedThrow([T, T, T, E], 1)).toBe(1);
+    });
+
+    it('räknar bakåt förbi tidigare turer', () => {
+      expect(insertIndexForMissedThrow([T, T, T, E, T, T], 1)).toBe(4);
+      expect(insertIndexForMissedThrow([T, T, T, E, T, T], 2)).toBe(2);
+    });
+
+    it('går inte under noll när det saknas kast att räkna', () => {
+      expect(insertIndexForMissedThrow([T], 5)).toBe(0);
+      expect(insertIndexForMissedThrow([], 0)).toBe(0);
+    });
   });
 
   it('ångra tar tillbaka turen', () => {
