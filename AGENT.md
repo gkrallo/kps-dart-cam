@@ -38,6 +38,10 @@ src/
     boardEllipse.ts            Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts           Autodetektering: ellipsmetod + HoughCircles-fallback
     dartTip.ts                 Spetsdetektering: axelanpassning + breddtest
+    blobGroups.ts              Sätter ihop maskfragment som hör till samma pil
+    dartCensus.ts              Avstämning: vilka pilar sitter faktiskt i tavlan
+    sectorPhase.ts             Rotationen ur röd/grön-växlingen i ringarna
+    shadowTest.ts              Skiljer pil från skugga/reflex
     calibration.ts             Sparad kalibrering (localStorage) + rotationsankare
     syntheticBoard.ts          Exakt tavla + pil renderad genom en känd kamera (offline-testning)
     audioEngine.ts             Ljudeffekt + svensk TTS
@@ -56,9 +60,12 @@ tavlans mått.
 ## Dataflöde
 
 ```
-kamera → warpPerspective(H) → gråskala → absdiff mot baseline
-   → tröskel → morfologi → största konturen (i RÅ bild) → spetspunkt (dartTip.ts)
+kamera → warpPerspective(H) → gråskala → absdiff mot baseline   (triggern)
+   → tröskel → morfologi → konturer (i RÅ bild)
+   → groupFragments (bitar av samma pil sätts ihop, blobGroups.ts)
+   → kandidater i storleksordning → spetspunkt (dartTip.ts)
    → warpPoint → getScoreFromPixel → segFromDartScore → useMatch.throwSeg
+   + avstämning mot TOM tavla (dartCensus.ts): kast, uttagning eller dold pil
    + tavla-tömd-detektering → endTurn / spelarbyte + ljud/TTS
 ```
 
@@ -99,12 +106,17 @@ koncentriska ringar med kända radier (170/107 mm) pinnar
 perspektivförkortningen; radiellt fel < 1 mm även vid brant kameravinkel
 (verifierat i `boardEllipse.test.ts`). `HoughCircles` finns kvar som fallback.
 
-**Rotationen kan inte bestämmas** av ringarna (rotationssymmetriska) eller
-färgmönstret (periodiskt). `orientToImageUp` gissar "20 i toppen" — några graders
-fel under gir/roll. `orientCalibrationToward(calib, punkt)` vrider gauge:n mot en
-utpekad 20-position. `calibration.ts` gör motsvarande på de fyra punkterna
-(`rotateCalibrationToAnchor`, "Peka ut 20:an"-knappen), och hela kalibreringen
-sparas i `localStorage` och återställs nästa gång.
+**Rotationen** kan inte bestämmas av ringarna (de är rotationssymmetriska), men
+väl av färgerna PÅ dem: dubbel- och trippelringen växlar röd/grön varje sektor,
+och sektor 20 är en mörk sektor med röd ring. `sectorPhase.ts` passar in
+fyrkantsvågens fas och ger vridningen. Mönstret är periodiskt med 36°, så det
+finns tio lika bra lösningar — `orientToImageUp` ("20 i toppen") väljer bland
+dem, och det som förut var några graders fel blir noll. Mätt på ett riktigt
+foto: -2,50°, mot -2,34° från en helt oberoende metod (luminansgradienten
+längs radien, alltså trådarna). Körs i `autoDetectBoardEllipse` och via knappen
+"Rikta in sektorer" (`alignSectorsToBoard`). Går färgerna inte att läsa finns
+`orientCalibrationToward(calib, punkt)` / `rotateCalibrationToAnchor`
+("Peka ut 20:an") kvar. Hela kalibreringen sparas i `localStorage`.
 
 Ett riktigt foto (`__tests__/fixtures/outdoor-board.jpg`) visade att röd/grön-
 masken plockar ut ringarna bra även på en sliten tavla i skugga — men att det
@@ -114,16 +126,24 @@ fyrkantighet och närhet till bildmitten. OpenCV-delen är dock fortfarande bara
 verifierad via Python-simulering, inte på riktig hårdvara.
 
 ### Sammanslagna pilar
-Största konturen tas alltid. Två pilar som sitter ihop ger en spets. Bör jämföra
-ny mask mot föregående och isolera det tillkomna området.
+Två pilar som sitter ihop ger fortfarande en kontur och en spets NÄR de kastas.
+Går de isär vid uttagning fångas den andra upp av avstämningen (`dartCensus.ts`)
+och sätts in på rätt plats i turen. Tre eller fler i en enda kontur är inte
+hanterat.
+
+En pil kan också falla isär i FLERA konturer — ligger det silvriga skaftet över
+ett gräddvitt fält saknar mellanstycket kontrast och försvinner ur masken.
+`groupFragments` (`blobGroups.ts`) sätter ihop dem igen; villkoret är att
+unionen blir mer avlång, så en skugga bredvid pilen inte slås ihop med den.
 
 ## Att göra
 
 1. ~~Verifiera hela flödet på riktig tavla~~ — **gjort sep 2026.** Detektering,
    pilmask och spelflöde (pil-ljud, uppläsning, spelarbyte) fungerar live.
-   Kvarstående delfråga: **bull-precision** (se `dart-detection-status`-minnet
-   och CLAUDE.md:s parametertabell) — prova `autoDetectBoardEllipse` i stället
-   för fyra manuella klick, den bör ge en mycket säkrare centrumuppskattning.
+   ~~Kvarstående delfråga: bull-precision~~ — **löst sep 2026** med
+   omkalibrering, belysningsring och sänkt analyströskel: samma pil gick från
+   `25 @ 13 mm` till `DB @ 2 mm`. Kvar att verifiera: bullträffar från riktiga
+   KAST (inte handplacerade) och en grön 25 nära en sektorgräns.
 2. Enskild pil-korrigering: dra ut fel pil, håll handen ur bild ≥2 s, sätt
    tillbaka på en tydlig plats — appen läser om just den positionen.
    (Kristians idé, ospikat.) Bygger vidare på `emptyBaseline`-logiken men per
@@ -133,6 +153,10 @@ ny mask mot föregående och isolera det tillkomna området.
 4. Rätta kast **flera turer bakåt** (motorn stödjer det, `removeThrow` /
    `replaceThrow`; UI:t rättar bara aktuell tur).
 5. Hantering av felaktig tavla-tömd-detektering (hand kvar i bild, dålig ljus).
+5b. Verifiera mot riktiga kast: fragmentgrupperingen (`blobGroups.ts`),
+   avstämningen (`dartCensus.ts`) och den automatiska sektorrotationen
+   (`sectorPhase.ts`). Alla tre är mätta offline mot riktiga foton och mot
+   syntetiskt facit, ingen av dem mot ett kast.
 6. Låt warpen i `App.tsx` gå genom `computeCalibration` (N grovt utpekade
    punkter) i stället för `cv.getPerspectiveTransform` på exakt fyra.
 7. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas).
@@ -143,6 +167,7 @@ ny mask mot föregående och isolera det tillkomna området.
 
 Klart och verifierat offline: homografilösaren, ellipskalibreringen,
 spetsdetekteringen, parallaxmätningen, rotationsankaret, sparad kalibrering,
+fragmentgrupperingen, avstämningen, sektorrotationen ur färgerna,
 **regelmotorn (301/501/Farfar) + rättning**. Parallax: en kamera räcker bara med
 spetsdetektering i råbilden eller två kameror. Klart och verifierat på riktig
 hårdvara: hela detekteringskedjan, pil-ljud, uppläsning per pil **och per
