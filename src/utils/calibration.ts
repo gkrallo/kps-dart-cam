@@ -1,4 +1,5 @@
 import type { Point } from '../types';
+import { CANONICAL_CALIBRATION_MM, computeCalibration } from './boardProjection';
 
 /**
  * Kalibreringens livscykel: spara en gång, återanvänd nästa gång, och låt
@@ -109,27 +110,45 @@ export function clearCalibration(): void {
 }
 
 /**
- * Roterar kalibreringspunkternas ordning så att den punkt som ligger närmast
- * riktningen mot `anchorTap` (från tavlans mitt) hamnar först - alltså blir
- * "Topp (20)". Ett grovt tryck räcker: den snäppar till närmaste 90 grader.
+ * Vrider kalibreringen så att 20:an hamnar i den riktning användaren pekar.
+ *
+ * Den gamla versionen kunde bara rotera punkternas ORDNING i kvartssteg: den
+ * valde vilken av de fyra befintliga punkterna som skulle räknas som "Topp
+ * (20)". Det hjälper när autodetekteringen lagt punkterna ett kvarts varv
+ * fel, men inte mot det fel som faktiskt uppstår: `autoDetectBoardEllipse`
+ * lägger punkterna vid ELLIPSENS topp, höger, botten och vänster, medan de
+ * ska ligga vid mitten av 20:ans, 6:ans, 3:ans och 11:ans dubbelfält. Det är
+ * samma sak bara om tavlan sitter med 20:an exakt rakt upp och kameran inte
+ * lutar i sidled. Är tavlan monterad några grader snett hamnar alla fyra
+ * punkterna bredvid sina fält och hela sektorhjulet vrids - wireframets FORM
+ * ser perfekt ut medan sektorerna läser fel. Uppmätt på Kristians tavla
+ * 2026-09-12; rättades då genom att dra alla fyra punkterna för hand.
+ *
+ * Rotationen sker i TAVLANS plan, inte i bilden: ser man tavlan snett är en
+ * vridning på tavlan ingen vridning i bilden. Därför tas kalibreringen fram
+ * ur nuvarande punkter, de kanoniska mm-punkterna roteras, och resultatet
+ * projiceras tillbaka till bildkoordinater. Bara tryckets RIKTNING används,
+ * inte avståndet - peka var som helst längs 20:ans mittlinje.
  */
 export function rotateCalibrationToAnchor(points: Point[], anchorTap: Point): Point[] {
   if (points.length !== 4) return points;
 
-  const cx = (points[0].x + points[1].x + points[2].x + points[3].x) / 4;
-  const cy = (points[0].y + points[1].y + points[2].y + points[3].y) / 4;
-  const tapAngle = Math.atan2(anchorTap.y - cy, anchorTap.x - cx);
+  const calib = computeCalibration([...CANONICAL_CALIBRATION_MM], points);
+  if (!calib) return points;
 
-  let bestK = 0;
-  let bestDiff = Infinity;
-  for (let k = 0; k < 4; k++) {
-    const a = Math.atan2(points[k].y - cy, points[k].x - cx);
-    const diff = Math.abs(Math.atan2(Math.sin(a - tapAngle), Math.cos(a - tapAngle)));
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestK = k;
-    }
-  }
+  const tapBoard = calib.unproject(anchorTap.x, anchorTap.y);
+  // dartMath-konventionen: 0 grader rakt upp, positivt medurs, y nedåt.
+  const angleOf = (p: Point) => Math.atan2(p.x, -p.y);
+  const tapAngle = angleOf(tapBoard);
+  if (!Number.isFinite(tapAngle)) return points;
 
-  return bestK === 0 ? points : [...points.slice(bestK), ...points.slice(0, bestK)];
+  // Appen tror att 20:an ligger i 0 grader. Användaren säger att den i
+  // själva verket ligger i `tapAngle`, så hela hjulet ska vridas dit.
+  const rotated = CANONICAL_CALIBRATION_MM.map((p) => {
+    const a = angleOf(p) + tapAngle;
+    const r = Math.hypot(p.x, p.y);
+    return { x: r * Math.sin(a), y: -r * Math.cos(a) };
+  });
+
+  return rotated.map((p) => calib.project(p.x, p.y));
 }

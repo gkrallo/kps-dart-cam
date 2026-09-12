@@ -8,6 +8,7 @@ import {
   toStored,
 } from '../calibration';
 import type { Point } from '../../types';
+import { CANONICAL_CALIBRATION_MM, computeCalibration } from '../boardProjection';
 
 class FakeStorage {
   private m = new Map<string, string>();
@@ -114,32 +115,77 @@ describe('saveCalibration / loadCalibration / clearCalibration', () => {
 
 describe('rotateCalibrationToAnchor', () => {
   // QUAD: index 0 topp, 1 höger, 2 botten, 3 vänster. Mitten ~ (200, 200).
-  it('lämnar ordningen om man pekar uppåt (20 redan i toppen)', () => {
-    expect(rotateCalibrationToAnchor(QUAD, { x: 200, y: 0 })).toBe(QUAD);
+  const SKEW: Point[] = [
+    { x: 210, y: 60 },
+    { x: 360, y: 190 },
+    { x: 220, y: 330 },
+    { x: 40, y: 210 },
+  ];
+
+  /** Vilken riktning på TAVLAN pekar en bildpunkt ut, givet kalibreringen? */
+  const boardAngleOf = (pts: Point[], tap: Point): number => {
+    const calib = computeCalibration([...CANONICAL_CALIBRATION_MM], pts)!;
+    const b = calib.unproject(tap.x, tap.y);
+    return ((Math.atan2(b.x, -b.y) * 180) / Math.PI + 360) % 360;
+  };
+
+  const near = (a: Point, b: Point) => {
+    expect(a.x).toBeCloseTo(b.x, 4);
+    expect(a.y).toBeCloseTo(b.y, 4);
+  };
+
+  it('pekar man rakt upp ändras ingenting (20:an satt redan rätt)', () => {
+    const r = rotateCalibrationToAnchor(QUAD, { x: 200, y: 0 });
+    r.forEach((p, i) => near(p, QUAD[i]));
   });
 
-  it('flyttar högerpunkten först om man pekar åt höger', () => {
-    const r = rotateCalibrationToAnchor(QUAD, { x: 390, y: 205 });
-    expect(r[0]).toEqual(QUAD[1]); // höger blir "Topp (20)"
-    expect(r[1]).toEqual(QUAD[2]);
-    expect(r[2]).toEqual(QUAD[3]);
-    expect(r[3]).toEqual(QUAD[0]);
+  it('pekar man åt höger vrids hjulet ett kvarts varv', () => {
+    const r = rotateCalibrationToAnchor(QUAD, { x: 390, y: 200 });
+    near(r[0], QUAD[1]); // höger blir "Topp (20)"
+    near(r[1], QUAD[2]);
+    near(r[2], QUAD[3]);
+    near(r[3], QUAD[0]);
   });
 
-  it('snäpper till närmaste 90 grader vid ett grovt tryck', () => {
-    // Grovt nedåt-vänster, men närmast botten.
-    const r = rotateCalibrationToAnchor(QUAD, { x: 170, y: 350 });
-    expect(r[0]).toEqual(QUAD[2]);
+  it('vrider till en GODTYCKLIG vinkel, inte bara kvartssteg', () => {
+    // Det här är hela poängen med omskrivningen: ellipsmetoden lägger
+    // punkterna vid ellipsens extrempunkter, och sitter tavlan några grader
+    // snett måste hjulet kunna vridas just de graderna.
+    const tap = { x: 240, y: 25 }; // en bit höger om toppen
+    const before = boardAngleOf(QUAD, tap);
+    expect(before).toBeGreaterThan(5); // 20:an låg inte där förut
+    expect(before).toBeLessThan(40);
+
+    const r = rotateCalibrationToAnchor(QUAD, tap);
+    // Efter vridningen SKA den riktningen vara 20:ans riktning, dvs 0 grader.
+    expect(boardAngleOf(r, tap)).toBeCloseTo(0, 3);
   });
 
-  it('hanterar en snett sedd (osymmetrisk) fyrhörning', () => {
-    const skew: Point[] = [
-      { x: 210, y: 60 },
-      { x: 360, y: 190 },
-      { x: 220, y: 330 },
-      { x: 40, y: 210 },
-    ];
-    const r = rotateCalibrationToAnchor(skew, { x: 40, y: 210 });
-    expect(r[0]).toEqual(skew[3]);
+  it('bara riktningen spelar roll, inte hur långt ut man trycker', () => {
+    // Båda längs riktningen (1,-2) från mitten (200,200), på olika avstånd.
+    const nearCentre = rotateCalibrationToAnchor(QUAD, { x: 230, y: 140 });
+    const farOut = rotateCalibrationToAnchor(QUAD, { x: 260, y: 80 });
+    nearCentre.forEach((p, i) => near(p, farOut[i]));
+  });
+
+  it('vrider i TAVLANS plan även när tavlan ses snett', () => {
+    // Under perspektiv är en vridning på tavlan ingen vridning i bilden.
+    // Ett kvarts varv måste ändå landa exakt på nästa kalibreringspunkt.
+    const r = rotateCalibrationToAnchor(SKEW, { x: SKEW[1].x, y: SKEW[1].y });
+    near(r[0], SKEW[1]);
+    near(r[1], SKEW[2]);
+    near(r[2], SKEW[3]);
+    near(r[3], SKEW[0]);
+  });
+
+  it('en andra vridning mot den nya 20:an ändrar ingenting', () => {
+    const once = rotateCalibrationToAnchor(SKEW, { x: 300, y: 80 });
+    const twice = rotateCalibrationToAnchor(once, once[0]);
+    twice.forEach((p, i) => near(p, once[i]));
+  });
+
+  it('lämnar punkterna orörda om de inte är fyra', () => {
+    const three = QUAD.slice(0, 3);
+    expect(rotateCalibrationToAnchor(three, { x: 200, y: 0 })).toBe(three);
   });
 });

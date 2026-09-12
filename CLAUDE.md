@@ -233,6 +233,20 @@ doubleOuter 170
    är hårdkodad överallt; ändra den inte utan att ändra på alla ställen.
 2. `CalibrationOverlay` ritar samtidigt ett wireframe av tavlan projicerat genom
    `computeHomography`, så användaren ser om punkterna sitter rätt.
+
+   **Wireframets form räcker inte som kontroll.** `autoDetectBoardEllipse`
+   lägger punkterna vid *ellipsens* topp/höger/botten/vänster, men de ska
+   ligga vid **mitten av 20:ans, 6:ans, 3:ans och 11:ans dubbelfält**. Det är
+   samma sak bara om tavlan sitter med 20:an exakt rakt upp och kameran inte
+   lutar i sidled. Sitter tavlan några grader snett hamnar alla fyra punkterna
+   bredvid sina fält: ellipsen följer dubbelringen perfekt medan hela
+   sektorhjulet är vridet och varje sektor läses fel. Uppmätt på Kristians
+   tavla 2026-09-12. Döm därför av de **streckade sektorlinjerna mot tavlans
+   riktiga trådar**. Rättas med "Peka ut 20:an"
+   (`rotateCalibrationToAnchor`), som vrider hjulet till en godtycklig vinkel
+   i *tavlans* plan - inte i bilden, för under perspektiv är det inte samma
+   sak. (Den gjorde tidigare bara kvartssteg och var därmed oanvändbar mot
+   det här felet.)
 3. Vid "Starta spel" konverterar `App.tsx` skärmkoordinater till
    videokoordinater. Videon visas med `object-cover`, alltså skalad med
    `Math.max(cw/vw, ch/vh)` och centrerad — samma formel måste användas åt båda
