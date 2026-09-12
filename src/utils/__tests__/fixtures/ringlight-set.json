@@ -1,7 +1,10 @@
 {
   "note": "Kristians utomhustavla 2026-09-12 ~17:40, dagsljus plus en belysningsring runt tavlan. Samma stativläge, samma hårdvaruzoom (2.1x) och samma kamera (1080x1920) i alla bilder - de är alltså direkt jämförbara pixel för pixel. Syftet är att kunna utveckla FÄRGbaserad diff offline: Kristians pilar har silvrigt skaft och svart vinge, och silver mot tavlans gräddvita fält har nästan ingen luminanskontrast. Se dart-detection-status-minnet.",
   "setup": {
-    "video_size": [1080, 1920],
+    "video_size": [
+      1080,
+      1920
+    ],
     "hardware_zoom": 2.1,
     "board_diameter_px_approx": 840,
     "px_per_mm_approx": 2.47,
@@ -21,7 +24,15 @@
       "truth": "20 (inre svarta fältet enligt Kristian)",
       "app_read": "S18@143mm/43°",
       "app_read_correct": false,
-      "blob": { "bbox": [117, 113], "elongation": 1.4, "axis": null, "method": "tyngdpunkt" },
+      "blob": {
+        "bbox": [
+          117,
+          113
+        ],
+        "elongation": 1.4,
+        "axis": null,
+        "method": "tyngdpunkt"
+      },
       "why_wrong": "Blobben är bara vingen. Vingens tyngdpunkt ligger ~40 mm utanför spetsen, vilket ger grannsektor på fel radie."
     },
     {
@@ -30,7 +41,18 @@
       "truth": "20 (yttre svarta fältet enligt Kristian)",
       "app_read": "S20@131mm/357°",
       "app_read_correct": true,
-      "blob": { "bbox": [255, 162], "elongation": 2.6, "axis": { "confidence": 0.61, "elongation": 3.5 }, "method": "axel" },
+      "blob": {
+        "bbox": [
+          255,
+          162
+        ],
+        "elongation": 2.6,
+        "axis": {
+          "confidence": 0.61,
+          "elongation": 3.5
+        },
+        "method": "axel"
+      },
       "why_right": "Hela pilen kom med i masken, så axelmetoden kunde anpassa pilens axel och hitta den smala änden."
     }
   ],
@@ -44,5 +66,6 @@
   ],
   "open_questions": [
     "DB lästes som EB (25) sent i sessionen, medan samma sorts handplacerade pil läste DB@2mm och DB@6mm tidigare samma dag. Mellan dessa tillfällen laddades appen om och kalibrerades om flera gånger. Misstanke: kalibreringen, inte detekteringen. Måste verifieras med en fixturbild."
-  ]
+  ],
+  "result_2026_09_12": "GENOMFÖRT. Bilderna avkodades med Windows System.Drawing och kördes genom appens kedja offline. Utfallet motsäger färghypotesen: pipan och spetsen kommer med i LUMINANS-masken även över det gräddvita fältet (blobb 2068 px, 108x36, elong 4,9) - det som saknas är bara det tunna mellanstycket mellan pipa och vinge, och det hittas inte av krominans heller (silver och gräddvitt skiljer sig för lite i både luma och Cr/Cb), samtidigt som max(|dLuma|, k*|dChroma|) tar konturantalet från 290 till 402 (k=2) respektive 840 (k=3). Det verkliga felet var att pilen blev TVÅ konturer och att kandidaterna prövades i storleksordning, så vingen (6803 px) vann och dess tyngdpunkt låg 198 px (~80 mm) från spetsen. Åtgärdat med groupFragments i src/utils/blobGroups.ts: felet blir 7 px här och 2 px i kontrollfallet. Se silverShaft.test.ts."
 }

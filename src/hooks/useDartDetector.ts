@@ -3,6 +3,7 @@ import { Point } from '../types';
 import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../utils/dartMath';
 import { chooseDartTip, detectDartAxisTip } from '../utils/dartTip';
 import { classifyShadow, type BlobSample } from '../utils/shadowTest';
+import { boundingRect, groupFragments, minAreaRect } from '../utils/blobGroups';
 
 /** Ringradier i den warpade bilden, härledda ur de officiella mm-måtten. */
 const RING_PX = {
@@ -333,8 +334,10 @@ export const useDartDetector = (
      * oförändrad bakgrund inne i den avlånga blobbens omskrivande rektangel,
      * och allt ser ut som "samma yta, annat ljus".
      */
-    const sampleBlob = (contour: any, reference: any): BlobSample[] => {
-      const rect = cv.boundingRect(contour);
+    const sampleBlob = (
+      rect: { x: number; y: number; width: number; height: number },
+      reference: any,
+    ): BlobSample[] => {
       const x0 = Math.max(0, rect.x);
       const y0 = Math.max(0, rect.y);
       const x1 = Math.min(rawGray.cols, rect.x + rect.width);
@@ -404,17 +407,31 @@ export const useDartDetector = (
       // egen kontur i samma maskbild. Uppmätt 2026-09-12: tre försök i rad
       // med handplacerad pil i bullen gav bara armblobben nere i bildhörnet.
       const MAX_CANDIDATES = 5;
-      const candidates: { idx: number; area: number }[] = [];
+      const candidates: { points: Point[]; area: number }[] = [];
       for (let i = 0; i < contours.size(); i++) {
-        const area = cv.contourArea(contours.get(i));
-        if (area > minArea && area < maxArea) candidates.push({ idx: i, area });
+        const contour = contours.get(i);
+        const area = cv.contourArea(contour);
+        if (area <= minArea || area >= maxArea) continue;
+        const points: Point[] = [];
+        for (let k = 0; k < contour.rows; k++) {
+          points.push({ x: contour.data32S[k * 2], y: contour.data32S[k * 2 + 1] });
+        }
+        candidates.push({ points, area });
       }
       candidates.sort((a, b) => b.area - a.area);
-      const tried = candidates.slice(0, MAX_CANDIDATES);
+
+      // Bitar av SAMMA pil sätts ihop innan de prövas. En pil blir inte
+      // alltid en kontur: ligger det silvriga skaftet över ett gräddvitt
+      // fält försvinner mellanstycket ur masken och pilen faller isär i
+      // pipa + vinge. Vingen är störst, vann kandidatordningen, och dess
+      // tyngdpunkt ligger ~40 mm från spetsen (uppmätt: 198 px fel, vilket
+      // blev S18 där sanningen var 20). Ihopsatt blir felet 7 px. Se
+      // blobGroups.ts och silverShaft.test.ts.
+      const tried = groupFragments(candidates.slice(0, MAX_CANDIDATES));
 
       let result: TipFind | null = null;
       // Störste blobben inom areafönstret är den som absorberas om inget dög.
-      lastBlobRect = tried.length ? cv.boundingRect(contours.get(tried[0].idx)) : null;
+      lastBlobRect = tried.length ? boundingRect(tried[0].points) : null;
 
       if (contours.size() === 0) {
         lastAnalysis = `ingen kontur (diff för liten)`;
@@ -423,10 +440,16 @@ export const useDartDetector = (
       } else {
         const rejected: string[] = [];
         for (const cand of tried) {
-          const found = evaluateCandidate(contours.get(cand.idx), cand.area, reference, contours.size());
+          const found = evaluateCandidate(
+            cand.points,
+            cand.area,
+            reference,
+            contours.size(),
+            cand.members.length,
+          );
           if (found) {
             result = found;
-            lastBlobRect = cv.boundingRect(contours.get(cand.idx));
+            lastBlobRect = boundingRect(cand.points);
             break;
           }
           rejected.push(`${cand.area | 0}px: ${lastAnalysis ?? '?'}`);
@@ -444,27 +467,29 @@ export const useDartDetector = (
      * spetsen eller null (med skälet i `lastAnalysis`).
      */
     const evaluateCandidate = (
-      contour: any,
+      points: Point[],
       bestArea: number,
       reference: any,
       nContours: number,
+      nParts: number,
     ): TipFind | null => {
       let result: TipFind | null = null;
       {
+        const bb = boundingRect(points);
+
         // Skuggtest FÖRE formtestet: en skugga kan mycket väl vara avlång och
         // klara både elongation och konfidens. Det som avslöjar den är att
         // tavlans eget mönster lyser igenom - se shadowTest.ts.
-        const lighting = classifyShadow(sampleBlob(contour, reference));
-
-        const points: Point[] = [];
-        for (let i = 0; i < contour.rows; i++) {
-          points.push({ x: contour.data32S[i * 2], y: contour.data32S[i * 2 + 1] });
-        }
+        const lighting = classifyShadow(sampleBlob(bb, reference));
 
         // Formkontroll: en pil är avlång. Runda blobbar är skuggor eller brus.
-        const rect = cv.minAreaRect(contour);
-        const long = Math.max(rect.size.width, rect.size.height);
-        const short = Math.max(Math.min(rect.size.width, rect.size.height), 1);
+        // minAreaRect görs i JS (blobGroups.ts) i stället för via OpenCV: en
+        // kandidat kan bestå av flera konturer efter grupperingen, och då
+        // finns ingen enskild kontur att ge cv.minAreaRect. Att den är ren
+        // TypeScript gör dessutom hela bedömningen körbar i testerna.
+        const rect = minAreaRect(points);
+        const long = Math.max(rect.width, rect.height);
+        const short = Math.max(Math.min(rect.width, rect.height), 1);
         const elongation = long / short;
 
         // Själva beslutet - vilken metod att tro på, eller avstå - ligger i
@@ -511,9 +536,10 @@ export const useDartDetector = (
           // Blobbens mått avslöjar om HELA pilen kom med eller bara vingen:
           // en hel pil är ~200x60 px vid den här skalan, en ensam vinge
           // ~60x50.
-          const bb = cv.boundingRect(contour);
           lastDiag =
             `area=${bestArea | 0} bbox=${bb.width}x${bb.height} kont=${nContours}` +
+            // delar>1 = grupperingen satte ihop en pil som masken delat itu.
+            (nParts > 1 ? ` delar=${nParts}` : '') +
             ` elong=${elongation.toFixed(1)}` +
             (axis
               ? ` axel(conf=${axis.confidence.toFixed(2)} elong=${axis.elongation.toFixed(1)}` +

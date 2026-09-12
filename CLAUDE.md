@@ -116,6 +116,7 @@ src/
     boardEllipse.ts           Ellipsanpassning + kalibrering ur ringellipser
     boardDetector.ts          Autodetektering: ellipsmetod + HoughCircles-fallback
     dartTip.ts                Spetsdetektering: axelanpassning (PCA) + breddtest
+    blobGroups.ts             Sätter ihop maskfragment som hör till samma pil (+ minAreaRect/konvext hölje i JS)
     shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
     calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
     syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
@@ -138,7 +139,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 186 tester
+npm test         # 243 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -169,6 +170,15 @@ offline mot en känd sanning — se `homography.test.ts`, `boardEllipse.test.ts`
 är ett riktigt foto av Kristians slitna utomhustavla (kväll, en strålkastare,
 snett sedd). Testet kör inte OpenCV men matar den rena geometrikedjan med
 faktiska röd/grön-maskpixlar ur fotot — verklig optik, verklig tavla.
+
+`silverShaft.test.ts` är samma idé men för pilen i stället för tavlan.
+`__tests__/fixtures/silver-shaft-blobs.json` innehåller de VERKLIGA maskblobbarna
+ur `dart-silver-shaft-on-cream.jpg` och `dart-silver-shaft-on-black.jpg`,
+extraherade offline med exakt samma kedja som appen kör (gråskala → blur →
+absdiff mot `board-empty-ringlight.jpg` → tröskel 10 → morfologi → komponenter).
+Repot har ingen JPEG-avkodare, så avkodningen gjordes en gång med Windows
+`System.Drawing`; fixturens `note` beskriver stegen om den behöver göras om.
+Samma testfil kör dessutom fallet genom `syntheticBoard` med exakt facit.
 
 `game/__tests__/engine.test.ts` är regelmotorn (portad från scorecardens
 `tools/test-engine.js`). `components/__tests__/gameViews.test.tsx` är ett
@@ -273,7 +283,8 @@ Spetsen hittas däremot i den **råa** (owarpade) bilden — se `dartTip.ts` och
 fallgropen nedan:
 
 ```
-rå gråskala → absdiff mot rå baseline → tröskel → morfologi → största konturen
+rå gråskala → absdiff mot rå baseline → tröskel → morfologi → konturer
+   → groupFragments (sätt ihop bitar av samma pil) → 5 största kandidaterna
    → detectDartAxisTip (PCA-axel + breddtest)  |  fallback: tyngdpunkt
    → perspectiveTransform(spets)  →  getScoreFromPixel  →  segFromDartScore
    →  useMatch.throwSeg  (+ pil-ljud, uppläst poäng)
@@ -346,6 +357,8 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | `elongation`, axelmetoden | 2–12 | `useDartDetector` (`MAX_ELONGATION`) | Nedre gräns (2) ärvd. Övre gräns (12) **tillagd av oss**, uppmätt: en spindeltråd/tavelkant/skuggrand mätte 24:1, riktiga kast 2,6–4,4. |
 | `elongation`, tyngdpunktsmetoden (frontal pil) | ≤ 3 (utan golv om skuggtestet frikänt blobben) | `dartTip.ts` (`MAX_CENTROID_ELONGATION`) | **Uppmätt av oss.** Taket var 5: dagens artefakter låg på elong 3,3, 3,8 och 4,3 med konfidens 0,09–0,15 och släpptes alltså igenom som "frontal pil" - de räddades bara av radiespärren. Tyngdpunkten är dessutom garanterat fel i en lång blob; den sitter mitt på pilkroppen. Golvet var 2,5 utifrån en gissning att en frontal pil mäter 2,5–4; uppmätt gav tre raka kast 1,2/1,4/1,6, så golvet är borta men kräver att skuggtestet aktivt frikänt blobben. |
 | Kandidater per analys | 5 största inom areafönstret | `useDartDetector` (`MAX_CANDIDATES`) | **Uppmätt av oss** 2026-09-12. Förut prövades bara den STÖRSTA konturen. Är handen kvar i bild - alltid vid handplacering, ofta när en pil just landat - är armen större än pilen, så armen valdes, förkastades, och pilen bredvid fick aldrig prövas. |
+| Fragmentglapp | ≤ 45 px (~19 mm) | `blobGroups.ts` (`MAX_FRAGMENT_GAP_PX`) | **Uppmätt av oss** 2026-09-12 mot fotot `dart-silver-shaft-on-cream.jpg`: glappet mellan pipa och vinge mätte 34 px. 45 ger marginal. Två olika pilar kan inte slås ihop av misstag - varje analys diffar mot en referens som redan innehåller de tidigare pilarna, så bara den nya pilens material finns i masken. |
+| Fragment som aldrig slås ihop | egen elongation > 12 | `blobGroups.ts` (`MAX_MERGE_ELONGATION`) | **Satt av oss.** Spindeltråd/tavelkant/skuggrand mäter 20–25:1 och kan ligga tätt intill pilen. Slogs de ihop skulle unionen bli för avlång och pilen MISSAS i stället för att bara läsas fel. |
 | Rimlig spetsradie | ≤ 190 mm | `useDartDetector` (`MAX_PLAUSIBLE_RADIUS_MM`) | **Uppmätt av oss.** Tavlan slutar vid 170 mm; en pil i omgivningen läser 170–185. Uppmätt bortom det: vingar på 210 och 242 mm, armar på 273–292 mm. Att registrera sådant som MISS är tyst fel i både poäng och pilräkning. |
 | Dubbeldetekterings-spärr | 1000 ms **och** 30 px (~13 mm) från senast registrerade pil | `useDartDetector` (`MIN_DART_SPACING_PX`) | **Tillagd av oss**: samma pil registrerades om medan den svängde in sig efter landning. |
 | Texturtröskel | stddev < 38 | `boardDetector` | Ärvd. Ska sålla bort släta ytor (väggar, tyg) vid tavledetektering. |
@@ -359,7 +372,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Ellipsval | fyrkantighet ≥ 0.55, centrum inom 0.42 × min(bild) | `boardDetector` | **Satt av oss.** Fotot visade att rödbrunt trädäck matchar "röd" bättre än den slitna ringen — "största konturen" låste på däcket. En ring är rund och nära bildmitten; däck och pilfenor är avlånga fläckar i kanten. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 186 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 243 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
@@ -516,6 +529,28 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    sett från kameran. Det är det vanliga verkliga fallet, men den tätaste
    varianten (spets mot spets) går inte att lösa med positionsspärren kvar.
 
+1d. **Pilen faller isär i masken — ÅTGÄRDAT 2026-09-12, otestat på hårdvara.**
+   Kristians pilar har silvrigt skaft och svart vinge. Ligger det tunna
+   mellanstycket över ett gräddvitt fält har det nästan ingen kontrast, faller
+   ur masken efter blur + `MORPH_OPEN`, och pilen blir TVÅ konturer: pipa+spets
+   och vinge. Kandidaterna prövades i storleksordning, så vingen vann - och en
+   vinges tyngdpunkt ligger ~40 mm från spetsen. Uppmätt på det verkliga fotot:
+   **198 px (~80 mm) fel**, vilket blev `S18@143mm` där sanningen var 20.
+   `groupFragments` (`blobGroups.ts`) sätter ihop bitarna igen innan de prövas;
+   samma foto ger då **7 px** fel, och kontrollfallet (samma pil mot svart ram,
+   som redan läste rätt) 2 px. Villkoret för att slå ihop är att unionen blir
+   MER avlång - bitar av samma pil ligger ände mot ände, medan en skugga
+   bredvid pilen gör unionen rundare.
+
+   **Rättelse av den tidigare hypotesen:** anteckningen sa att skaftet var
+   HELT frånvarande ur masken och att lösningen var färg-/krominansdiff i
+   stället för luminans. Mätningen säger något annat: pipan och spetsen kommer
+   med fint, det är bara mellanstycket som faller bort, och en krominansdiff
+   (`R−B` / `Cr`,`Cb`) hittar inte heller det - silver och gräddvitt skiljer
+   sig för lite i BÅDA måtten - samtidigt som den tar konturantalet från 290
+   till 402–840. Färgspåret är alltså mätt och lagt ned; problemet var vilken
+   blobb som valdes, inte vad masken innehöll.
+
 2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
    dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en
    pil som satt dold bakom en annan kan avslöjas och sättas in i efterhand när
@@ -525,7 +560,8 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    fallback om den nya logiken inte räcker till, eller för att rätta en pil
    som lästes fel utan att vara dold.
 3. **Sammanslagna pilar** blir fortfarande en kontur och ger en spets NÄR de
-   kastas (oförändrat) - men om de går isär till två synliga pilar vid
+   kastas (oförändrat - grupperingen i punkt 1d gäller bitar av EN pil, inte
+   två pilar) - men om de går isär till två synliga pilar vid
    uttagning fångas den andra nu upp där (se punkt 2). Tre eller fler pilar
    sammanslagna i en enda kontur är fortfarande inte hanterat. Missas en pil
    helt säger appen till vid turslut ("bara 2 av 3 pilar avlästa", både på
