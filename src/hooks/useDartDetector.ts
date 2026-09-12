@@ -4,6 +4,12 @@ import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../
 import { chooseDartTip, detectDartAxisTip } from '../utils/dartTip';
 import { classifyShadow, type BlobSample } from '../utils/shadowTest';
 import { boundingRect, groupFragments, minAreaRect } from '../utils/blobGroups';
+import {
+  interpretCensus,
+  reconcileDarts,
+  type CensusVerdict,
+  type MaterialDelta,
+} from '../utils/dartCensus';
 
 /** Ringradier i den warpade bilden, härledda ur de officiella mm-måtten. */
 const RING_PX = {
@@ -30,6 +36,8 @@ export interface DetectorDebug {
 interface TipFind {
   tip: Point;
   how: string;
+  /** Blobbens omskrivande rektangel, för `absorbBlobRegion`. */
+  rect: { x: number; y: number; width: number; height: number };
 }
 
 export const useDartDetector = (
@@ -104,6 +112,11 @@ export const useDartDetector = (
     const baseThresh = new cv.Mat();
     const emptyDiff = new cv.Mat();
     const emptyThresh = new cv.Mat();
+    // Rådiff mot den TOMMA tavlan - underlaget för den positionsbaserade
+    // avstämningen (dartCensus.ts). `emptyDiff`/`emptyThresh` ovan är den
+    // WARPADE motsvarigheten och används till "tavlan tömd"-kollen.
+    const censusDiff = new cv.Mat();
+    const censusThresh = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
     // Referensbilderna (warpad bild, motion-grinden). VIKTIGT: uppdatera dem
     // med `gray.copyTo(baseline)`, ALDRIG `baseline = gray.clone()`. I den här
@@ -217,6 +230,26 @@ export const useDartDetector = (
       snapshots.forEach((s) => s.delete());
       snapshots = [];
       pushSnapshot();
+    };
+
+    /**
+     * Spetsarna i RÅ kamerakoordinater, i exakt samma ordning som
+     * `detectedDartsRef.current` (som håller de warpade). Avstämningen i
+     * `dartCensus.ts` jämför blobbar mot kända pilar, och blobbarna hittas i
+     * råbilden - att warpa fram och tillbaka för varje jämförelse skulle bara
+     * lägga till avrundningsfel. De två listorna MÅSTE ändras tillsammans.
+     */
+    let rawTips: Point[] = [];
+    /**
+     * Antal skilda pixlar mot den TOMMA tavlan vid förra analysen. Skillnaden
+     * mellan två analyser säger om det blev MER eller MINDRE material i
+     * tavlan - en oberoende riktningskontroll som avstämningen behöver, se
+     * `MaterialDelta` i dartCensus.ts. -1 = ingen mätning gjord än.
+     */
+    let lastEmptyDiffPx = -1;
+    const forgetDart = (index: number) => {
+      rawTips.splice(index, 1);
+      detectedDartsRef.current.splice(index, 1);
     };
 
     let rafId = 0;
@@ -362,7 +395,13 @@ export const useDartDetector = (
      * avslöjad dold pil - en pil ska klara samma krav i båda fallen.
      * Returnerar null + sätter `lastAnalysis` om inget dög.
      */
-    const findDartTip = (threshMat: any, reference: any, frameArea: number): TipFind | null => {
+    const findDartTips = (
+      threshMat: any,
+      reference: any,
+      frameArea: number,
+      /** Hur många pilar som ska letas fram. 1 = första som duger (kastläget). */
+      wanted = 1,
+    ): TipFind[] => {
       if (maskMode && debugCanvasRef.current) {
         // FÖRE morfologin: visar vad tröskeln faktiskt gav. Data-URL:en läses
         // ut SYNKRONT direkt efteråt, för React återställer canvasens
@@ -406,7 +445,9 @@ export const useDartDetector = (
       // armen och pilen får aldrig prövas, trots att den ligger där som en
       // egen kontur i samma maskbild. Uppmätt 2026-09-12: tre försök i rad
       // med handplacerad pil i bullen gav bara armblobben nere i bildhörnet.
-      const MAX_CANDIDATES = 5;
+      // Fler kandidater när flera pilar ska hittas på en gång: tre pilar som
+      // var och en fallit isär i pipa + vinge är sex fragment.
+      const MAX_CANDIDATES = wanted > 1 ? 12 : 5;
       const candidates: { points: Point[]; area: number }[] = [];
       for (let i = 0; i < contours.size(); i++) {
         const contour = contours.get(i);
@@ -429,7 +470,7 @@ export const useDartDetector = (
       // blobGroups.ts och silverShaft.test.ts.
       const tried = groupFragments(candidates.slice(0, MAX_CANDIDATES));
 
-      let result: TipFind | null = null;
+      const results: TipFind[] = [];
       // Störste blobben inom areafönstret är den som absorberas om inget dög.
       lastBlobRect = tried.length ? boundingRect(tried[0].points) : null;
 
@@ -448,19 +489,26 @@ export const useDartDetector = (
             cand.members.length,
           );
           if (found) {
-            result = found;
-            lastBlobRect = boundingRect(cand.points);
-            break;
+            results.push(found);
+            if (results.length === 1) lastBlobRect = boundingRect(cand.points);
+            if (results.length >= wanted) break;
+            continue;
           }
           rejected.push(`${cand.area | 0}px: ${lastAnalysis ?? '?'}`);
         }
-        if (!result) lastAnalysis = `inget av ${tried.length} kandidater dög [${rejected.join(' | ')}]`;
+        if (results.length === 0) {
+          lastAnalysis = `inget av ${tried.length} kandidater dög [${rejected.join(' | ')}]`;
+        }
       }
 
       contours.delete();
       hierarchy.delete();
-      return result;
+      return results;
     };
+
+    /** Första kandidaten som duger. Kastlägets vanliga anrop. */
+    const findDartTip = (threshMat: any, reference: any, frameArea: number): TipFind | null =>
+      findDartTips(threshMat, reference, frameArea, 1)[0] ?? null;
 
     /**
      * Prövar EN kontur: skuggtest, formtest och rimlig radie. Returnerar
@@ -567,7 +615,7 @@ export const useDartDetector = (
           if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
             lastAnalysis = `spets på radie ${radiusMM | 0} mm, utanför tavlan (troligen arm eller bara vingen)`;
           } else {
-            result = { tip: tipRaw, how };
+            result = { tip: tipRaw, how, rect: bb };
           }
         }
       }
@@ -614,6 +662,7 @@ export const useDartDetector = (
       } else {
         lastRegisterTime = nowMs;
         detectedDartsRef.current.push(tip);
+        rawTips.push(found.tip);
         pushSnapshot();
         lastAnalysis = `PIL registrerad (${found.how})`;
         onDartDetectedRef.current(tip);
@@ -629,6 +678,138 @@ export const useDartDetector = (
           (lastDiag ? `  ${lastDiag}` : '') +
           `  → ${lastAnalysis}`,
       );
+    };
+
+    /**
+     * Räknar pilarna i tavlan i stället för att gissa av pixelmängder.
+     *
+     * Diffar råbilden mot den TOMMA tavlan (`snapshots[0]`), letar fram varje
+     * pilformad blobb och stämmer av mot de spetsar vi redan registrerat. Se
+     * dartCensus.ts för varför: `dBase < dTop` är nära ett myntkast när
+     * pilarna är ungefär lika stora i bild, för absdiff är symmetriskt och
+     * "en pil tillkom" ser likadant ut som "en pil försvann".
+     *
+     * Rör inte `lastAnalysis`/`lastBlobRect` - de hör till den gren som
+     * faktiskt agerar.
+     */
+    const runCensus = (frameArea: number): { verdict: CensusVerdict; found: TipFind[] } => {
+      const empty = snapshots[0];
+      const savedAnalysis = lastAnalysis;
+      const savedRect = lastBlobRect;
+      let found: TipFind[] = [];
+      let delta: MaterialDelta = 'unknown';
+      try {
+        cv.absdiff(rawGray, empty, censusDiff);
+        cv.threshold(censusDiff, censusThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+        // Riktningen mäts FÖRE findDartTips, som kör morfologi på masken.
+        const emptyPx = cv.countNonZero(censusThresh);
+        if (lastEmptyDiffPx >= 0) {
+          // Samma areagolv som för en pilblob: mindre än så är brus, inte pil.
+          const step = frameArea * 0.0002;
+          if (emptyPx > lastEmptyDiffPx + step) delta = 'more';
+          else if (emptyPx < lastEmptyDiffPx - step) delta = 'less';
+        }
+        lastEmptyDiffPx = emptyPx;
+        // En mer än vi tror sitter där: annars kan ett nytt kast aldrig synas.
+        found = findDartTips(censusThresh, empty, frameArea, rawTips.length + 1);
+      } catch (err) {
+        console.error('Avstämningen misslyckades:', err);
+      } finally {
+        lastAnalysis = savedAnalysis;
+        lastBlobRect = savedRect;
+      }
+      const result = reconcileDarts({ known: rawTips, seen: found.map((f) => f.tip) });
+      const verdict = interpretCensus(result, {
+        knownCount: rawTips.length,
+        // Hittades ingen blobb alls MEN vi tror att pilar sitter där, är det
+        // analysen som inte gick att lita på - inte bevis för att tavlan är
+        // tom. Den skillnaden är hela skälet till att `sawAnything` finns.
+        sawAnything: found.length > 0 || rawTips.length === 0,
+        materialDelta: delta,
+      });
+      return { verdict, found };
+    };
+
+    /**
+     * Håller snapshot-stacken i takt med pilräkningen efter en avstämning.
+     * Nivå 0 är alltid den tomma tavlan; toppen ska vara bilden som den ser ut
+     * nu, annars diffar nästa analys mot ett läge som inte finns längre.
+     */
+    const syncSnapshots = () => {
+      while (snapshots.length > rawTips.length + 1) popSnapshot();
+      while (snapshots.length < rawTips.length + 1) pushSnapshot();
+      absorbIntoTop();
+    };
+
+    /**
+     * Gör det avstämningen kom fram till. Returnerar false om beslutet inte
+     * gick att genomföra - då får pixelheuristiken försöka i stället.
+     */
+    const actOnCensus = (
+      verdict: CensusVerdict,
+      seenDarts: TipFind[],
+    ): boolean => {
+      if (verdict.kind === 'oförändrat') {
+        // Alla kända pilar syns, inget nytt hittades. Absorbera INTE hela
+        // bildrutan här: har en pil landat utan att kännas igen som pilform
+        // skulle den sväljas in i referensen och bli permanent osynlig (det
+        // hände två gånger 2026-09-12 med den gamla helrute-absorptionen).
+        // Låt i stället den gamla kastgrenen göra sitt - den absorberar bara
+        // den förkastade blobbens yta. Uttagningsgrenen vetas av anroparen.
+        return false;
+      }
+
+      if (verdict.kind === 'nytt kast') {
+        const found = seenDarts[verdict.seenIndex];
+        if (!found) return false;
+        // Rektangeln måste följa med: avslås kastet av tidsspärren absorberar
+        // registerNewThrow `lastBlobRect`, och den skulle annars peka på en
+        // blobb från en tidigare analys.
+        lastBlobRect = found.rect;
+        registerNewThrow(found);
+        return true;
+      }
+
+      if (verdict.kind === 'uttagning') {
+        // Bakifrån, så indexen framför inte förskjuts under tiden.
+        const idx = [...verdict.knownIndexes].sort((a, b) => b - a);
+        for (const i of idx) forgetDart(i);
+        syncSnapshots();
+        lastAnalysis = `${idx.length} pil(ar) uttagna (avstämt), ${rawTips.length} kvar`;
+        for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
+        return true;
+      }
+
+      // 'osäker' hanteras av anroparen, som faller tillbaka på
+      // pixelheuristiken - hit ska den aldrig komma.
+      if (verdict.kind !== 'uttagning med dold pil') return false;
+
+      // Uttagning som blottade en pil vi aldrig registrerat: den satt dold
+      // bakom den som just drogs ut. Samma spärrar som den gamla grenen -
+      // ett felaktigt insatt kast ändrar ställningen tyst, så hellre missa en
+      // dold pil än hitta på en.
+      const revealed = seenDarts[verdict.seenIndex];
+      const idx = [...verdict.knownIndexes].sort((a, b) => b - a);
+      for (const i of idx) forgetDart(i);
+
+      const tip = revealed ? warpPoint(revealed.tip) : null;
+      const outsideBoard =
+        !!tip && Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) > BOARD_PX * 0.55;
+      if (tip && !nearKnownDart(tip) && !outsideBoard) {
+        detectedDartsRef.current.push(tip);
+        rawTips.push(revealed!.tip);
+        syncSnapshots();
+        lastAnalysis = `DOLD PIL avslöjad vid uttagning (avstämt, ${revealed!.how})`;
+        for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
+        onHiddenDartRevealedRef.current?.(tip);
+        return true;
+      }
+
+      syncSnapshots();
+      const why = !tip ? 'ingen pilform' : outsideBoard ? 'utanför tavlan' : 'redan registrerad pil';
+      lastAnalysis = `${idx.length} pil(ar) uttagna (avstämt), rest ignorerad (${why})`;
+      for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
+      return true;
     };
 
     /**
@@ -659,16 +840,35 @@ export const useDartDetector = (
         dBase = cv.countNonZero(baseThresh);
       }
 
+      // Avstämningen först: den vet VAR pilarna sitter och behöver inte gissa
+      // ur pixelmängder. Pixelheuristiken nedan är kvar som fallback för de
+      // fall avstämningen säger "vet inte" - typiskt när blobbanalysen inte
+      // gick att köra.
+      const { verdict, found: seenDarts } = runCensus(frameArea);
+      if (verdict.kind !== 'osäker') {
+        const acted = actOnCensus(verdict, seenDarts);
+        if (acted) {
+          logAnalysis(`AVSTÄMD/${verdict.kind}`, dTop, dBase);
+          return;
+        }
+      }
+      if (debugRef.current) {
+        lastDiag = `${lastDiag} census=${verdict.kind}`.trim();
+      }
+      // Såg avstämningen alla kända pilar kan ingen ha tagits ut, hur
+      // pixelmängderna än ser ut.
+      const censusSawAllDarts = verdict.kind === 'oförändrat';
+
       // Går bilden NÄRMARE nivån under toppen än toppen själv - något drogs
       // ut, inte till. En pil som just kastats gör tvärtom: går längre bort
       // från toppen (mer material), aldrig närmare ett äldre snapshot.
-      const removalLikely = hasBelow && dBase < dTop;
+      const removalLikely = hasBelow && dBase < dTop && !censusSawAllDarts;
 
       if (removalLikely && dBase < CLEAR_MATCH) {
         // Ren uttagning: toppilen drogs ut, ingenting nytt syns. En nivå ner.
         lastAnalysis = `pil uttagen (${snapshots.length - 2} kvar denna omgång)`;
         popSnapshot();
-        detectedDartsRef.current.pop();
+        forgetDart(detectedDartsRef.current.length - 1);
         onDartRemovedRef.current?.();
         logAnalysis('UTTAG', dTop, dBase);
         return;
@@ -700,8 +900,9 @@ export const useDartDetector = (
           lastAnalysis = `DOLD PIL avslöjad vid uttagning (${found!.how})`;
           popSnapshot();
           pushSnapshot(); // nuvarande bild (den avslöjade pilen, ensam) blir nya toppen
-          if (detectedDartsRef.current.length > 0) detectedDartsRef.current.pop();
+          if (detectedDartsRef.current.length > 0) forgetDart(detectedDartsRef.current.length - 1);
           detectedDartsRef.current.push(tip);
+          rawTips.push(found!.tip);
           onHiddenDartRevealedRef.current?.(tip);
         } else {
           // Osäkert. Säkraste antagandet är en ren uttagning - annars
@@ -710,7 +911,7 @@ export const useDartDetector = (
           const why = !tip ? 'ingen pilform' : outsideBoard ? 'utanför tavlan' : 'redan registrerad pil';
           lastAnalysis = `pil uttagen, rest ignorerad (${dBase | 0} px, ${why})`;
           popSnapshot();
-          detectedDartsRef.current.pop();
+          forgetDart(detectedDartsRef.current.length - 1);
           onDartRemovedRef.current?.();
         }
         logAnalysis('UTTAG/DOLD', dTop, dBase);
@@ -829,6 +1030,8 @@ export const useDartDetector = (
           cv.threshold(emptyDiff, emptyThresh, 30, 255, cv.THRESH_BINARY);
           if (cv.countNonZero(emptyThresh) < 400) {
             detectedDartsRef.current = [];
+            rawTips = [];
+            lastEmptyDiffPx = -1;
             resetSnapshots();
             gray.copyTo(baseline);
             calmSince = 0;
@@ -908,6 +1111,7 @@ export const useDartDetector = (
       [
         warped, gray, diff, thresh, diffPrev, threshPrev,
         rawGray, rawDiff, rawThresh, baseDiff, baseThresh, emptyDiff, emptyThresh,
+        censusDiff, censusThresh,
         kernel, baseline, previous, emptyBaseline,
       ].forEach((m) => m?.delete());
       snapshots.forEach((m) => m?.delete());

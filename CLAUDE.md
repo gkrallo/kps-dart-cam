@@ -118,6 +118,7 @@ src/
     sectorPhase.ts            Rotationen: vilken sektor är 20, ur röd/grön-växlingen i ringarna
     dartTip.ts                Spetsdetektering: axelanpassning (PCA) + breddtest
     blobGroups.ts             Sätter ihop maskfragment som hör till samma pil (+ minAreaRect/konvext hölje i JS)
+    dartCensus.ts             Positionsbaserad avstämning: vilka pilar sitter faktiskt i tavlan
     shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
     calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
     syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
@@ -140,7 +141,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 260 tester
+npm test         # 284 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -304,6 +305,14 @@ rå gråskala → absdiff mot rå baseline → tröskel → morfologi → kontur
 
 Därefter sätts nya baselines (warpad + rå) så nästa pil syns som en ny skillnad.
 
+**Vad som faktiskt hände avgörs av en avstämning, inte av pixelmängder.** Vid
+varje analys diffas råbilden också mot den TOMMA tavlan, alla pilformade
+blobbar tas fram och stäms av mot de spetsar appen redan registrerat
+(`dartCensus.ts`). Blobb utan känd spets = oregistrerad pil (nytt kast, eller
+en dold pil som blottats); känd spets utan blobb = uttagen pil. Den gamla
+pixelheuristiken (`dBase < dTop`) finns kvar som fallback när avstämningen
+svarar "osäker" - se punkt 5 under "Vad som inte fungerar bra ännu".
+
 **Tavla-tömd → spelarbyte.** En långlivad referensbild (`emptyBaseline`, den
 tomma tavlan vid speluppstart) används som säkerhetsnät: när en stabil bildruta
 är nästan identisk med den igen, och minst en pil hunnit registreras, tvingas
@@ -373,6 +382,8 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Fragment som aldrig slås ihop | egen elongation > 12 | `blobGroups.ts` (`MAX_MERGE_ELONGATION`) | **Satt av oss.** Spindeltråd/tavelkant/skuggrand mäter 20–25:1 och kan ligga tätt intill pilen. Slogs de ihop skulle unionen bli för avlång och pilen MISSAS i stället för att bara läsas fel. |
 | Rimlig spetsradie | ≤ 190 mm | `useDartDetector` (`MAX_PLAUSIBLE_RADIUS_MM`) | **Uppmätt av oss.** Tavlan slutar vid 170 mm; en pil i omgivningen läser 170–185. Uppmätt bortom det: vingar på 210 och 242 mm, armar på 273–292 mm. Att registrera sådant som MISS är tyst fel i både poäng och pilräkning. |
 | Dubbeldetekterings-spärr | 1000 ms **och** 30 px (~13 mm) från senast registrerade pil | `useDartDetector` (`MIN_DART_SPACING_PX`) | **Tillagd av oss**: samma pil registrerades om medan den svängde in sig efter landning. |
+| Avstämning: hopparningsavstånd | 40 px (~17 mm) | `dartCensus.ts` (`DEFAULT_MATCH_PX`) | **Satt av oss.** Något mer än `MIN_DART_SPACING_PX` (30): samma pil kan mätas några pixlar isär mellan två analyser, och en missad hopparning blir BÅDE en falsk uttagning och ett falskt nytt kast. |
+| Avstämning: riktningsgolv | 0,02 % av bildytan (samma som `minArea`) | `useDartDetector` (`runCensus`) | **Satt av oss.** Ändras antalet skilda pixlar mot den tomma tavlan mindre än så mellan två analyser räknas riktningen som okänd. |
 | Texturtröskel | stddev < 38 | `boardDetector` | Ärvd. Ska sålla bort släta ytor (väggar, tyg) vid tavledetektering. |
 | HoughCircles | dp=1, minDist=minRadius, param1=100, param2=30 | `boardDetector` | Ärvd. param2=30 är lågt och ger många falska cirklar. |
 | Radieintervall | 0.12–0.45 × min(bredd,höjd) | `boardDetector` | Ärvd (maxRadius höjd från 0.40). |
@@ -386,7 +397,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 260 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 284 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
@@ -596,13 +607,29 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    korrelera mot. Ligger fläcken mitt i ett enfärgat fält svarar testet "vet
    inte" och släpper igenom den - då är det bara form- och konfidenstesterna
    som gäller, som förut.
-5. **Add-vs-remove-heuristiken** (`dBase < dTop` i `useDartDetector`) är en
-   ren pixelräkning. När pilarna är ungefär lika stora i bild är den nära ett
-   myntkast, och en dold pil hittas då inte alls (ingen felaktig ställning -
-   bara utebliven rättning). Den robusta lösningen är positionsbaserad
-   avstämning: håll en RÅ referens av tom tavla, hitta alla pilformade
-   konturer mot den och matcha mot kända spetsar - omatchad blob = oregistrerad
-   pil, känd spets utan blob = uttagen pil. Inte byggt.
+5. **Add-vs-remove — positionsbaserad avstämning BYGGD 2026-09-12, otestad
+   på hårdvara.** `dBase < dTop` var en ren pixelräkning och nära ett myntkast
+   när pilarna var ungefär lika stora i bild. Nu diffas råbilden mot den TOMMA
+   tavlan (`snapshots[0]`), alla pilformade blobbar tas fram och stäms av mot
+   de spetsar appen redan registrerat (`dartCensus.ts`): blobb utan känd spets
+   = oregistrerad pil, känd spets utan blobb = uttagen pil. Då spelar det
+   heller ingen roll i vilken ORDNING pilarna dras ur, vilket stackmetoden
+   krävde.
+
+   Två spärrar som är värda att känna till innan man felsöker den:
+   - `sawAnything`: hittades ingen blobb alls men appen tror att pilar sitter
+     där, blir svaret "osäker" - inte "alla pilar borttagna".
+   - `materialDelta`: en oberoende riktningsmätning (antal skilda pixlar mot
+     tom tavla, jämfört med förra analysen). Tappas en redan registrerad pil
+     ur masken samtidigt som ett kast landar ser hopparningen "en känd borta,
+     en ny sedd" - exakt samma mönster som en dold pil. Att materialet ÖKADE
+     är det som skiljer dem åt. Utan den kunde ett vanligt kast radera
+     föregående pil.
+
+   Säger avstämningen "osäker" faller koden tillbaka på den gamla
+   pixelheuristiken, som alltså finns kvar. Säger den "oförändrat" hanteras
+   bildrutan också av den gamla kastgrenen - men uttagning vetas, för alla
+   kända pilar syntes ju.
 6. **Parallax** (mätt): en kamera räcker bara med spetsdetektering i råbilden
    (finns nu) eller två kameror. Ett kvarvarande fel på några mm är oundvikligt
    med en kamera när pilen lutar mycket.
