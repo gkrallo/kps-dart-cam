@@ -137,6 +137,118 @@ ett gräddvitt fält saknar mellanstycket kontrast och försvinner ur masken.
 `groupFragments` (`blobGroups.ts`) sätter ihop dem igen; villkoret är att
 unionen blir mer avlång, så en skugga bredvid pilen inte slås ihop med den.
 
+## Jämförelse mot marknaden (2026-09-13)
+
+Kristian lät tre AI:er researcha hur andra kamerabaserade darträknare löser
+felhantering, och sammanställde det till en brief med nio förslag. Nedan är
+bedömningen mot vår kod. Den är dokumenterad för att slippa göra om den, och
+för att flera av förslagen visade sig vara lösta hos oss på annat sätt.
+
+**Referenserna** som var värda något: Autodarts Lens (Winmau, sep 2026, den
+bäst dokumenterade enkameralösningen), Scolia (flerkamera, men tydlig
+turlogik), och DeepDarts-artikeln (Waterloo, CVSports 2021) som är det enda
+hårda siffermaterialet: 94,7 % rätt totalpoäng rakt framifrån, 84,0 % vid
+varierande kameravinkel. Deras felanalys stämmer med vår: vanligast är missad
+detektion på grund av skymning, näst vanligast är pilar på segmentkant.
+
+Det finns ingen oberoende jämförelse där samma telefon, ljus och kastserie
+körts genom flera appar. Jaga inte någon annans siffra.
+
+### Redan löst hos oss - stryk
+
+| Förslag | Var |
+|---|---|
+| Hand i bild som eget tillstånd | Rörelse ger `MOTION` och ingen analys; analys bara på stilla bild i 500 ms; `maxArea` 2,5 % tar armblobbar; skuggtestet finns |
+| Stabilitetsfönster före låsning | 500 ms stillastående + 1 s mellan registreringar + 30 px platsspärr + 2 s uppstartsspärr |
+| Röstuppläsning av poäng | `audioEngine`, inklusive felfallen ("bara 2 av 3 pilar avlästa", "ingen pil avläst") |
+| Rättning flera turer bakåt | `TurnHistory`, 12 turer över spelare och rundor |
+| Växla spelare trots olöst pil | Växlar alltid vid tomt bräde; gul banner med "Lägg till" ligger kvar |
+| Uttag som turgräns | Gäller 301/501. **Inte** Farfar - se nedan |
+
+Principen briefen mäter mot - *automatisera flödet, aldrig bekräftelsen* -
+följer vi redan. Enda modalen är uppstartskortet, som ligger utanför spelet.
+
+### Farfar: briefen har rätt i problemet, fel i lösningen
+
+Förslaget var att flytta turgränsen från pilantal till uttag, eftersom en
+Farfar-tur kan vara 1-7 pilar. Men i Farfar är pilantalet **inte bara en
+gräns - det är en del av poängen**: `savedDarts = available - thrown`. Att
+avsluta turen på uttag utan att veta hur många pilar som kastades flyttar bara
+felet från "turen hänger sig" till "fel antal sparade pilar", vilket är
+tystare och värre.
+
+Signalen som faktiskt löser det finns redan: `dartCensus.ts` räknar hur många
+pilformade blobbar som fysiskt sitter i tavlan, oberoende av hur många som
+gick att LÄSA. Ser den tre men bara två är registrerade vet vi att en pil
+missades även om vi inte kan läsa den. Det gör om "turen hänger sig" till
+"turen är slut, en pil okänd, fyll i".
+
+Bygg det INTE som en tyst nolla i kastlistan - rätt pilräkning men fel poäng
+är precis den sortens tysta fel vi undviker på alla andra ställen. Turen ska
+avslutas med uppläst varning och gul banner.
+
+### Confidence-nivåer: rätt idé, fel signal
+
+Förslaget var tre nivåer i stället för binärt. Vi har en confidence (0-1) men
+den är **inte kalibrerad för ett mellanläge**: uppmätt ligger riktiga kast på
+0,55-0,80 och artefakter på 0,09-0,23. Gapet är brett och nästan tomt, så ett
+"medel"-band på den signalen skulle sällan träffa något.
+
+Den signal som är exakt, gratis och träffar precis det DeepDarts pekar ut som
+näst vanligaste felet är **avståndet i millimeter till närmaste sektorgräns**.
+Ren geometri vi redan räknar. En pil 1 mm från T20/S20-tråden är osäker
+oavsett vad detektorn tycker om sin egen blobb, och det är just den pilen som
+kostar 40 poäng.
+
+Samma sak gäller DB mot grön 25: briefen föreslog "extra marginal" mellan dem.
+Det går inte - gränsen är 6,35 mm ur `BOARD_MM`, och att flytta den vore att
+införa ett systematiskt fel. Det rätta är att flagga osäkerhet NÄRA gränsen,
+aldrig att flytta gränsen.
+
+### Korrigeringslogg: det som är värt mest, och en hake
+
+Varje rättning användaren gör är ett färdigetiketterat testfall, och den
+snabbaste vägen till att kunna mäta om en ändring hjälpte. Additivt, billigt,
+och inget lämnar telefonen - vilket arkitekturprincipen kräver ändå.
+
+Haken: ett kast lagras som `{ t: 'T', v, m }` utan proveniens, så en rättning
+vet i dag inte vad detektorn SÅG. Det behövs en sidotabell från kastindex till
+detektionsdata (area, bbox, elongation, konfidens, avstämningens utfall,
+spetsposition). Allt är redan uträknat - bara inte sparat.
+
+### Ordningen i turen: värd mer hos oss än hos referensapparna
+
+Sedan 2026-09-13 sätts en avslöjad pil in sist i turen som en GISSNING. I
+301/501 spelar det sällan roll; i Farfar kan en felplacerad röd bull ändra
+utfallet. Drag-och-släpp avråds - pilar upp/ner per kast i `TurnHistory` är en
+bråkdel av jobbet och fungerar bättre med tummen.
+
+### Ordning att ta det i
+
+1. **Testa det vi har först.** Flera av förslagen ovan är åtgärder mot fel vi
+   ännu inte sett i verkligheten.
+2. Korrigeringsloggen, direkt efter testsessionen medan felen är färska.
+3. Farfar-räkningen via census - men bara om testet visar att turer faktiskt
+   hänger sig.
+4. Osäkerhetsflagga på sektormarginal.
+5. Pilar upp/ner i `TurnHistory`.
+
+### Förkastat, och varför
+
+- **Gester framför kameran** (hand över bullen = ångra): krockar med att man
+  sträcker sig in mot tavlan för att hämta pilar.
+- **Röststyrning**: mikrofontillstånd, svensk igenkänning och ett rum med prat
+  och musik blir en ny felkälla, inte färre tryck.
+- **Att rutinmässigt lära ut att dra ur pilar mitt i turen** för att avslöja
+  skymda: skapar tvetydiga händelser. Vår uttagningslogik ska vara en riktad
+  åtgärd när något saknas, inte ett generellt beteende.
+- **Att jaga en publicerad träffsäkerhetssiffra**: det finns ingen oberoende
+  mätning att jämföra mot.
+
+Ej utvärderat men noterat: en Bluetooth-fjärr eller smartklocka för "nästa
+runda" och "ångra". Klarar bara binära handlingar, inte vilket segment - så
+komplement, aldrig ersättning.
+
 ## Att göra
 
 1. ~~Verifiera hela flödet på riktig tavla~~ — **gjort sep 2026.** Detektering,
@@ -151,8 +263,12 @@ unionen blir mer avlång, så en skugga bredvid pilen inte slås ihop med den.
    pil, inte hela tavlan.
 3. Tap-to-correct direkt i Vision View (nu finns bara `ThrowEditor` via
    pilrutorna i panelen). Ger även märkt data för framtida ML.
-4. Rätta kast **flera turer bakåt** (motorn stödjer det, `removeThrow` /
-   `replaceThrow`; UI:t rättar bara aktuell tur).
+4. ~~Rätta kast flera turer bakåt~~ — **gjort.** `TurnHistory` ("Turer" i
+   bottenraden) visar de 12 senaste turerna, över både spelare och rundor, och
+   låter en rätta, ta bort och lägga in en missad pil på rätt plats.
+   Ställningen räknas om ur kastlistan. Det som återstår är att flytta ett
+   kast inom turen utan att ta bort och lägga in igen - se punkt 9 och
+   bedömningen av punkt I nedan.
 5. Hantering av felaktig tavla-tömd-detektering (hand kvar i bild, dålig ljus).
 5b. Verifiera mot riktiga kast: fragmentgrupperingen (`blobGroups.ts`),
    avstämningen (`dartCensus.ts`) och den automatiska sektorrotationen
@@ -162,9 +278,11 @@ unionen blir mer avlång, så en skugga bredvid pilen inte slås ihop med den.
    punkter) i stället för `cv.getPerspectiveTransform` på exakt fyra.
 7. Service worker för fullt offline-läge (opencv.js är 10 MB och bör precachas).
 8. Lokal ML (DeepDarts-liknande keypoint-modell).
-9. Turordning: om en pil missas men nästa läses hamnar kasten fel i listan.
-   Spelar roll för Farfar och 301/501-utgång. Ospikat hur det ska upptäckas
-   eller rättas.
+9. Turordning: om en pil missas men nästa läses hamnar kasten fel i listan,
+   och en pil som avslöjas vid uttagning sätts in sist i turen som en
+   GISSNING (`insertIndexForRevealedThrow`). Spelar roll för Farfar, där en
+   felplacerad röd bull ändrar utfallet, och för 301/501-utgång. Billigaste
+   åtgärden är pilar upp/ner per kast i `TurnHistory` - se punkt I nedan.
 
 Klart och verifierat offline: homografilösaren, ellipskalibreringen,
 spetsdetekteringen, parallaxmätningen, rotationsankaret, sparad kalibrering,

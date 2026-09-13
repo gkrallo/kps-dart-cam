@@ -699,5 +699,14 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    checksummor, `grabDiag`) är kvar från felsökningen av clone()-buggen. Ta
    bort när bull-precisionen är löst och inga fler djupdykningar behövs.
 
-Nästa planerade steg: bull-precision (auto-kalibrera), positionsbaserad
-avstämning (punkt 5), tap-to-correct i Vision View.
+**Nästa steg: testsessionen vid tavlan.** Sex saker är byggda och mätta
+offline men har aldrig sett ett riktigt kast - `TESTPLAN.md` har genomgången i
+rätt ordning, och `tools/` har felsökningsriggen (adb + CDP) som läser loggar
+och bildrutor från datorn utan att röra telefonen.
+
+Efter testet, i den ordningen: korrigeringslogg (billigast, störst värde -
+varje rättning blir ett etiketterat testfall), Farfar-pilräkning via
+avstämningen om turer visar sig hänga sig, osäkerhetsflagga på avstånd till
+sektorgräns, och pilar upp/ner i `TurnHistory`. Skälen bakom den ordningen -
+och vad som är medvetet förkastat - står i `AGENT.md` under "Jämförelse mot
+marknaden".
