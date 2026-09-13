@@ -164,8 +164,10 @@ export function interpretCensus(
   }
 
   // Mindre (eller okänt) material: pilen framför drogs ut och blottade en pil
-  // som satt dold bakom den. Det är hela poängen med att dra ur pilarna i
-  // omvänd ordning - se `correction-and-readout-wishlist`.
+  // som satt dold bakom den. Notera att ordningen inte spelar någon roll här -
+  // hopparningen är positionsbaserad. Den som skymde är alltid en TIDIGARE
+  // pil (en pil blir oläst för att något redan satt i vägen), så spelaren
+  // uppmanas ta ut de pilar som räknats rätt först.
   if (unregistered.length === 1) {
     return { kind: 'uttagning med dold pil', knownIndexes: removed, seenIndex: unregistered[0] };
   }

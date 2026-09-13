@@ -133,7 +133,7 @@ describe('spelvyer renderar utan att krascha', () => {
 
   it('HelpPanel', () => {
     const html = renderToStaticMarkup(createElement(HelpPanel, { onClose: noop }));
-    expect(html).toContain('omvänd ordning');
+    expect(html).toContain('räknats');
   });
 
   it('TurnHistory - grupperar kast i turer över flera spelare', () => {

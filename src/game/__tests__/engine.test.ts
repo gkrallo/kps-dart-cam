@@ -9,7 +9,7 @@ import {
   removeThrow,
   replaceThrow,
   insertThrow,
-  insertIndexForMissedThrow,
+  insertIndexForRevealedThrow,
 } from '../match';
 import { farfarEngine, targetFor } from '../farfar';
 import type { GameMode, Match } from '../types';
@@ -138,33 +138,29 @@ describe('301 / 501', () => {
     expect(matchState(m).currentDarts.map((d) => d.v)).toEqual([20, 5, 1]);
   });
 
-  describe('plats för en pil som hittas vid uttagning', () => {
+  describe('plats för en pil som avslöjas vid uttagning', () => {
     const T = { t: 'T' as const, v: 20, m: 1 };
     const E = { t: 'E' as const };
 
-    it('inga uttagna pilar än: före det senaste kastet', () => {
-      expect(insertIndexForMissedThrow([T, T, T], 0)).toBe(2);
+    it('sist i den pågående turen', () => {
+      expect(insertIndexForRevealedThrow([T, T])).toBe(2);
+      expect(insertIndexForRevealedThrow([T, T, T])).toBe(3);
     });
 
-    it('en pil redan uttagen: ett kast längre bak', () => {
-      expect(insertIndexForMissedThrow([T, T, T], 1)).toBe(1);
+    it('hamnar inte i nästa spelares tur om turen redan avslutats', () => {
+      // Ett avslutande 'E' hoppas över, annars skulle pilen räknas för fel
+      // spelare - det dyraste felet insättningen kan göra.
+      expect(insertIndexForRevealedThrow([T, T, T, E])).toBe(3);
+      expect(insertIndexForRevealedThrow([T, T, E, E])).toBe(2);
     });
 
-    it('hoppar över turbytet när turen avslutats manuellt med "Nästa"', () => {
-      // [T T T E] - 'E' är inget kast och får inte räknas som ett, då hade
-      // insättningen hamnat ett steg fel (och i fel tur).
-      expect(insertIndexForMissedThrow([T, T, T, E], 0)).toBe(2);
-      expect(insertIndexForMissedThrow([T, T, T, E], 1)).toBe(1);
+    it('tidigare turer lämnas orörda', () => {
+      expect(insertIndexForRevealedThrow([T, T, T, E, T, T])).toBe(6);
     });
 
-    it('räknar bakåt förbi tidigare turer', () => {
-      expect(insertIndexForMissedThrow([T, T, T, E, T, T], 1)).toBe(4);
-      expect(insertIndexForMissedThrow([T, T, T, E, T, T], 2)).toBe(2);
-    });
-
-    it('går inte under noll när det saknas kast att räkna', () => {
-      expect(insertIndexForMissedThrow([T], 5)).toBe(0);
-      expect(insertIndexForMissedThrow([], 0)).toBe(0);
+    it('tom kastlista ger noll', () => {
+      expect(insertIndexForRevealedThrow([])).toBe(0);
+      expect(insertIndexForRevealedThrow([E])).toBe(0);
     });
   });
 

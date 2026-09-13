@@ -11,7 +11,7 @@ import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
 import { segFromDartScore } from './game';
-import { engineFor, matchState, insertIndexForMissedThrow } from './game/match';
+import { engineFor, matchState, insertIndexForRevealedThrow } from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
 import { HelpPanel } from './components/HelpPanel';
@@ -68,11 +68,6 @@ export default function App() {
   const [showResume, setShowResume] = useState(false);
   const startupDecided = useRef(false);
 
-  // Antal rena uttagningar bekräftade sen tavlan senast var full (nollställs
-  // vid `handleBoardCleared`). Behövs för att räkna ut VAR i kastlistan en
-  // pil som avslöjas vid uttagning (se `handleHiddenDartRevealed`) ska sättas
-  // in - se kommentaren i useDartDetector.ts vid `snapshots`.
-  const removedSinceClearRef = useRef(0);
   /**
    * Antal pilar som registrerats sedan tavlan senast var tom. Behövs för att
    * skilja "Farfar-turen är färdigspelad" från "ingenting lästes av alls" -
@@ -117,7 +112,6 @@ export default function App() {
     setShowManualNext(false);
     setMissedDarts(null);
     dartsSinceClearRef.current = 0;
-    removedSinceClearRef.current = 0;
   }, [match?.id]);
 
   // Avslutas matchen (eller startas en ny) ska uppstartsskärmen upp igen.
@@ -172,9 +166,6 @@ export default function App() {
   }, [throwSeg]);
 
   const handleBoardCleared = useCallback(() => {
-    // Ny omgång med uttagningar börjar om nästa gång tavlan töms igen.
-    removedSinceClearRef.current = 0;
-
     const readThisVisit = dartsSinceClearRef.current;
     dartsSinceClearRef.current = 0;
     setAwaitingRetrieval(false);
@@ -256,9 +247,10 @@ export default function App() {
     }
   }, [match, finishTurn]);
 
-  const handleDartRemoved = useCallback(() => {
-    removedSinceClearRef.current += 1;
-  }, []);
+  // Uttagningar behöver inte längre räknas: platsen för en avslöjad pil
+  // härleds inte ur uttagningsordningen. Callbacken finns kvar för att
+  // detektorn ska kunna säga till, och för framtida UI.
+  const handleDartRemoved = useCallback(() => {}, []);
 
   const handleHiddenDartRevealed = useCallback((pt: Point) => {
     // Är matchen avgjord tar motorn ändå inte emot kastet (canThrow → false),
@@ -268,9 +260,9 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const seg = segFromDartScore(scoreObj);
 
-    // Den dolda pilen kastades precis före den pil som just drogs ut - se
-    // insertIndexForMissedThrow för hur platsen räknas fram.
-    insertMissingThrow(insertIndexForMissedThrow(match.actions, removedSinceClearRef.current), seg);
+    // Sist i turen - se insertIndexForRevealedThrow för varför det är den
+    // bästa gissningen när ordningen inte går att härleda.
+    insertMissingThrow(insertIndexForRevealedThrow(match.actions), seg);
 
     audioEngine.playDartHitSound();
     audioEngine.speak(`Dold pil hittades: ${scoreObj.label}, ${scoreObj.totalPoints} poäng.`);
@@ -325,7 +317,7 @@ export default function App() {
     : state.finished
       ? { text: `${state.winners.join(' och ')} vinner!`, waiting: false }
       : waitingForRetrieval
-        ? { text: 'Dra ut pilarna – en i taget, i omvänd ordning', waiting: true }
+        ? { text: 'Dra ut de pilar som räknats rätt – en i taget', waiting: true }
         : {
             text: `Kasta, ${state.active.name}`,
             waiting: false,

@@ -151,9 +151,10 @@ hade hårdkodade pixelradier som var systematiskt fel — 6,4 mm av dubbelringen
 - **Döm kalibreringen av de streckade sektorlinjerna mot tavlans riktiga
   trådar** — inte av wireframets form. Formen kan följa dubbelringen perfekt
   medan hela sektorhjulet är vridet. Knappen "Rikta in sektorer" rättar det.
-- **Dra ut pilarna i omvänd ordning**, en i taget med en kort paus. Då kan
-  appen upptäcka en pil som suttit dold bakom en annan och sätta in den på
-  rätt plats i turen.
+- **Ta ut de pilar som räknats rätt först**, en i taget med en kort paus.
+  Ordningen spelar ingen roll i övrigt. En pil som inte räknats var skymd av en
+  annan som redan satt i tavlan, så den blir synlig först när den
+  framförvarande tas bort — och då hittar appen den automatiskt.
 - **Kalibrera om** om telefonen flyttat sig, även lite.
 
 ---

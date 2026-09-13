@@ -25,9 +25,9 @@ const SECTIONS: Section[] = [
   },
   {
     icon: HandMetal,
-    title: 'Hämta pilar - i omvänd ordning',
+    title: 'Hämta pilar - de räknade först',
     body:
-      'Dra ut den sist kastade pilen först, en i taget, med en kort paus mellan varje. Sitter en pil dold bakom en annan (osynlig för kameran) avslöjas den då automatiskt när pilen ovanpå tas bort, i stället för att aldrig räknas. Ryck inte ut alla tre på en gång om du kan undvika det.',
+      'Ta ut de pilar som appen räknat rätt först, en i taget med en kort paus mellan varje. Ordningen spelar ingen roll i övrigt. Skälet: en pil som inte räknats var skymd av en annan som redan satt i tavlan, så den blir synlig först när den framförvarande tas bort - och då hittar appen den automatiskt i stället för att missa den helt. Ryck inte ut alla tre på en gång om du kan undvika det.',
   },
   {
     icon: Pencil,

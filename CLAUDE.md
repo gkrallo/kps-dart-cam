@@ -96,7 +96,7 @@ src/
     ThrowEditor.tsx           Knappsats för att rätta en avläst pil
     TurnHistory.tsx           Turer bakåt: rätta, ta bort, lägga till missad pil
     HelpPanel.tsx             Hjälptexter (kalibrering, uttagning, rättning)
-    RetrievalTip.tsx          Engångstips: dra ut pilarna i omvänd ordning
+    RetrievalTip.tsx          Engångstips: ta ut de pilar som räknats först
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
@@ -333,7 +333,7 @@ inte ska räknas som en spelad tur. För Farfar går turen ändå inte att avslu
 antalet pilar ÄR spelet, och `farfarEngine.endTurn` vägrar - så där blir det i
 stället en varning om att fylla i pilarna via Turer.
 
-**Omvänd uttagning avslöjar dolda pilar (tillagt 2026-09-11).** `useDartDetector`
+**Uttagning avslöjar dolda pilar (tillagt 2026-09-11, ordningskravet borttaget 2026-09-13).** `useDartDetector`
 håller en STACK av rå-bilder (`snapshots`), en nivå per pil som registrerats
 den här omgången (nivå 0 = tom tavla). Varje ny stabil bildruta jämförs mot
 BÅDA de två översta nivåerna, inte bara toppen som tidigare:
@@ -354,14 +354,25 @@ DOLD pil (bilden skiljer sig fortfarande, för att en till pil satt bakom den
 just borttagna - känt problem, se "sammanslagna pilar" i listan nedan). I det
 senare fallet körs samma formanalys (PCA-axel, elongation, konfidens) som för
 ett vanligt kast, fast på resten-diffen mot den äldre nivån, och en ny
-`onHiddenDartRevealed(tip)`-callback sätter in kastet på RÄTT plats i
-kastlistan (`insertThrow` i `game/match.ts`) - före den pil som just drogs ut,
-inte sist. `App.tsx` räknar ut var med en enkel räknare
-(`removedSinceClearRef`, nollställd i `handleBoardCleared`) eftersom pilar
-alltid dras i turordning (sist kastad ut först) - se `RetrievalTip`/`HelpPanel`
-för hur det förklaras för spelaren. Idén är samma som konkurrenten Darteer.ai:s
-instruktion "dra ut pilarna i omvänd ordning" - se minnesanteckningen
-`correction-and-readout-wishlist`. Otestat på riktig hårdvara, se
+`onHiddenDartRevealed(tip)`-callback sätter in kastet i kastlistan
+(`insertThrow` i `game/match.ts`).
+
+**Ordningen man drar ut pilarna i spelar ingen roll, och det är en rättelse,
+inte en förenkling.** Instruktionen var länge "dra ut pilarna i omvänd
+ordning" (lånad från Darteer.ai), och `App.tsx` räknade fram insättningsplatsen
+ur hur många pilar som dragits ut. Det är fel håll. En pil blir oläst för att
+något som REDAN satt i tavlan skymde den - alltså en **tidigare** pil. Pil 1
+kan aldrig skymmas av occlusion, och risken växer med kastnumret. Drar man ut
+den sist kastade först tar man alltså bort den skymda och låter den som skymmer
+sitta kvar.
+
+Spelaren uppmanas i stället ta ut **de pilar som räknats rätt** först, i valfri
+ordning. Det är dessutom det enda man i praktiken kan avgöra: man minns inte
+kastordningen, men man hör vad appen räknade. Avstämningen (`dartCensus.ts`) är
+positionsbaserad och bryr sig inte om ordning alls. Insättningsplatsen är sist
+i turen - se `insertIndexForRevealedThrow` för varför det är den bästa
+gissningen när ordningen inte går att härleda. Se `RetrievalTip`/`HelpPanel`
+för hur det förklaras för spelaren. Otestat på riktig hårdvara, se
 [[pending-test-checklist]].
 
 ### Trösklar och parametrar — var ärlig om vad de är värda
@@ -631,14 +642,22 @@ efter de första riktiga testomgångarna på Kristians tavla — se
    Kvar: färgmönstret upprepar sig var 36:e grad, så "20 nära toppen" behövs
    fortfarande för att välja bland de tio lösningarna.
 
-2. **Uttagning av pilar** hanteras nu stegvis (se "Omvänd uttagning avslöjar
-   dolda pilar" ovan) i stället för att bara känna igen hela-tavlan-tömd - en
-   pil som satt dold bakom en annan kan avslöjas och sättas in i efterhand när
-   pilarna dras i omvänd ordning. **Otestat på riktig hårdvara.** Kristians
-   ursprungsidé (dra ut fel pil, håll handen ur bild ≥2 s, sätt tillbaka för
-   att läsa om just den positionen) är fortfarande inte byggd - kvarstår som
-   fallback om den nya logiken inte räcker till, eller för att rätta en pil
-   som lästes fel utan att vara dold.
+2. **Uttagning av pilar** hanteras stegvis och positionsbaserat (se
+   "Uttagning avslöjar dolda pilar" ovan) i stället för att bara känna igen
+   hela-tavlan-tömd - en pil som satt dold bakom en annan avslöjas när den
+   framförvarande tas bort, i valfri ordning. **Otestat på riktig hårdvara.**
+
+   **Felavlästa pilar (inte missade) har fortfarande ingen lösning utan
+   skärm.** Kristians ursprungsidé - dra ut den felavlästa, håll handen ur
+   bild ≥2 s, sätt tillbaka för att läsa om just den positionen - är inte
+   byggd, och har en inbyggd svaghet: samma hål genom samma kamera ger ofta
+   samma felavläsning igen. Den hjälper bara när felet berodde på skymning,
+   inte på kontrast. Det som faktiskt finns i dag är att varje pil läses upp
+   direkt (så felet hörs i stunden) och att matchen är event-sourcad, så hela
+   turen går att rätta i efterhand via `TurnHistory` utan att spelet störs.
+   Gester framför kameran (hand över bullen = ångra) är övervägda och
+   förkastade: de krockar med att man sträcker sig in mot tavlan för att
+   hämta pilar.
 3. **Sammanslagna pilar** blir fortfarande en kontur och ger en spets NÄR de
    kastas (oförändrat - grupperingen i punkt 1d gäller bitar av EN pil, inte
    två pilar) - men om de går isär till två synliga pilar vid

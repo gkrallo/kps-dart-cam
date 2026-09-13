@@ -149,10 +149,14 @@ export const useDartDetector = (
     // sist, alltså överst i stacken) ut och det fortfarande skiljer sig
     // ordentligt mot nivån under - då satt en till pil dold bakom den. Den
     // "avslöjas": vi letar pilform i det som skiljer sig mot den äldre
-    // nivån och sätter in den som ett kast FÖRE den precis borttagna pilen
-    // (se `onHiddenDartRevealed`, `insertThrow` i match.ts). Det här är
-    // samma idé som konkurrenten Darteers instruktion "dra ut pilarna i
-    // omvänd ordning" - se minnesanteckningen `correction-and-readout-wishlist`.
+    // nivån och sätter in den sist i turen (se `onHiddenDartRevealed` och
+    // `insertIndexForRevealedThrow` i match.ts för varför just där).
+    //
+    // Stacken är sedan avstämningen (`dartCensus.ts`) inte längre det som
+    // avgör vad som hänt - den är en referensbild per pil, inget mer. Den
+    // ordningsberoende idén den byggde på ("dra ut i omvänd ordning", lånad
+    // från Darteer.ai) är övergiven: en oläst pil skymdes av en TIDIGARE pil,
+    // så det är den som måste bort först.
     let snapshots: any[] = [];
     const pushSnapshot = () => {
       const snap = new cv.Mat();

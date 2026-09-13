@@ -162,7 +162,7 @@ export function replaceThrow(match: Match, actionIndex: number, dart: Seg): Matc
 
 /**
  * Sätter in ett kast som saknades i kastlistan (t.ex. en pil som satt dold
- * bakom en annan och först hittades när pilarna drogs ut i omvänd ordning -
+ * bakom en annan och först hittades när den framförvarande drogs ut -
  * se `onHiddenDartRevealed` i `useDartDetector`). Till skillnad från
  * `throwDart` går kastet in på en given plats i listan, inte sist, så
  * turordningen blir rätt även om den avslöjade pilen egentligen kastades
@@ -175,23 +175,31 @@ export function insertThrow(match: Match, actionIndex: number, dart: Seg): Match
 }
 
 /**
- * Var ska en pil som hittades vid uttagning sättas in? Pilar dras sist-först,
- * så när `removedCount` pilar redan dragits ur är den vi just tog bort kast
- * nummer `removedCount + 1` bakifrån - den dolda pilen kastades precis före
- * det, alltså på samma index.
+ * Var en pil som avslöjats vid uttagning sätts in i kastlistan.
  *
- * Räknar bara 'T'-poster: avslutas turen manuellt med "Nästa" lägger motorn
- * en 'E' sist i listan, och räknas den som ett kast hamnar insättningen ett
- * steg fel (och därmed i fel tur).
+ * Sist i den pågående turen. Det är en GISSNING, och det är värt att veta
+ * varför det ändå är den bästa:
+ *
+ * En pil blir oläst för att den i landningsögonblicket inte gav tillräckligt
+ * med ny synlig yta - alltså skymdes den av något som redan satt i tavlan,
+ * och det kan bara vara en TIDIGARE pil. Pil 1 kan därför aldrig skymmas, och
+ * risken växer med kastnumret. Sist i turen är alltså den enskilt troligaste
+ * platsen, och den ligger garanterat efter den pil som skymde.
+ *
+ * Tidigare räknades platsen fram ur hur många pilar som dragits ut hittills
+ * (`insertIndexForMissedThrow`), på antagandet att pilarna alltid drogs ut i
+ * omvänd kastordning. Det antagandet är borta: uttagningen är numera
+ * positionsbaserad (`dartCensus.ts`) och spelaren uppmanas dra ut de pilar som
+ * räknats rätt, i vilken ordning som helst - bland annat för att man i
+ * praktiken inte minns kastordningen.
+ *
+ * Eventuella avslutande 'E' hoppas över, så pilen inte hamnar i NÄSTA spelares
+ * tur om turen redan hunnit avslutas.
  */
-export function insertIndexForMissedThrow(actions: MatchAction[], removedCount: number): number {
-  let seen = 0;
-  for (let i = actions.length - 1; i >= 0; i--) {
-    if (actions[i].t !== 'T') continue;
-    if (seen === removedCount) return i;
-    seen++;
-  }
-  return 0;
+export function insertIndexForRevealedThrow(actions: MatchAction[]): number {
+  let i = actions.length;
+  while (i > 0 && actions[i - 1].t === 'E') i--;
+  return i;
 }
 
 export function serializeMatch(match: Match) {

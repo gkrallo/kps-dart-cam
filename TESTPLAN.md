@@ -195,14 +195,26 @@ Kör i den här ordningen, och stanna vid första felet.
 
 1. **Ren uttagning.** Tre vanliga pilar, dra ut dem en i taget med en paus
    emellan. Tavlan ska nå tom utan spökkast på vägen.
-2. **Fel ordning.** Dra ut den som kastades FÖRST först. Det här gick inte
-   förut (stacken antog sist-först) och ska fungera nu.
+2. **Valfri ordning.** Dra ut dem i en annan ordning än de kastades. Det här
+   gick inte förut (stacken antog sist-först) och ska fungera nu. Ordningen
+   ska inte påverka någonting - avstämningen matchar på position.
 3. **Dold pil.** Kasta två pilar så att de smälter ihop till en blobb sett från
-   kameran — de registreras som EN. Dra sedan ut den främre. Kommer
-   "Dold pil hittades", och växer pilraden med rätt värde på rätt plats?
+   kameran — de registreras som EN. Dra sedan ut **den som räknades** (den som
+   sitter framför, sett från kameran). Kommer "Dold pil hittades", och växer
+   pilraden med rätt värde?
+
+   **Det är den här riktningen som gäller**, inte "sist kastad först": en pil
+   blir oläst för att en pil som redan satt i tavlan skymde den, så det är
+   skymmaren som måste bort. Rättat 2026-09-13 efter Kristians observation.
+
    **OBS:** spetsarna måste sitta mer än ~15 mm isär, annars förkastas den
    avslöjade pilen av avståndsspärren. Det är spärren som gör sitt jobb, inte
    ett fel.
+
+   **Platsen i turen är en gissning.** Den avslöjade pilen sätts in sist i
+   turen, för risken att skymmas växer med kastnumret. Blev ordningen fel går
+   den att flytta under Turer - notera om det händer ofta, för i Farfar
+   påverkar ordningen utfallet.
 4. **Slarvig uttagning.** Ryck ut alla tre i ett svep. Ska ändå landa rätt via
    säkerhetsnätet "tavlan tom".
 
