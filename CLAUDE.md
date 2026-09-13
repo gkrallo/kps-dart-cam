@@ -127,6 +127,7 @@ src/
     __tests__/                Vitest
 
 scripts/copy-opencv.mjs       Kopierar opencv.js från node_modules till public/
+tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md
 public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
 .github/workflows/deploy.yml  Test → bygge → deploy till Pages
 AGENT.md                      Arkitektur + lista över kända begränsningar

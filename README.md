@@ -76,6 +76,17 @@ automatiskt av `dev` och `build`, så du behöver sällan tänka på det.
 Lägg till `?debug` i URL:en för en diagnostikpanel med detektorns tillstånd och
 en rad per analys; `?debug&mask` ritar dessutom ut själva maskbilden.
 
+För att felsöka mot telefonen finns `tools/` — anslut över USB och läs loggar,
+bildrutor och maskbilder från datorn utan att röra skärmen:
+
+```bash
+npm run phone:check                      # är riggen redo?
+npm run phone:log                        # strömma detektorns loggar
+node tools/grab.mjs tom-tavla            # spara bildruta + mask + tillstånd
+```
+
+Se `TESTPLAN.md` för hela arbetssättet.
+
 ---
 
 ## Publicering

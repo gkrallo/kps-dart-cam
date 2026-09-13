@@ -47,6 +47,7 @@ src/
     audioEngine.ts             Ljudeffekt + svensk TTS
     __tests__/                 Vitest
 scripts/copy-opencv.mjs        Kopierar opencv.js från npm till public/
+tools/                         adb + CDP-verktyg för felsökning mot telefonen
 .github/workflows/deploy.yml   Test + bygge + deploy till GitHub Pages
 ```
 

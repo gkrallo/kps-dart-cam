@@ -24,23 +24,90 @@ Räkna med **60–90 minuter**. Hoppa hellre över steg 8 än att slarva med ste
 
 ---
 
+## Så här kör vi — utan att röra telefonen
+
+Telefonen ansluts över USB (utvecklarläge + USB-felsökning påslaget), och då
+läses allt från datorn. **Du ska aldrig behöva kopiera en loggrad eller flytta
+en bild ur mobilens galleri.** Vill du slippa kabeln: `adb tcpip 5555` följt av
+`adb connect <telefonens-ip>:5555`, så funkar det över wifi och Samsung Flow
+kan ha skärmen samtidigt.
+
+| Kommando | Vad det gör |
+|---|---|
+| `npm run phone:check` | Steg 0 nedan, automatiskt: telefon, bygge, `?debug`, att videon rullar, och hur stor tavlan är i bild |
+| `npm run phone:log` | Strömmar `[det]`/`[analyse]`-raderna med klocktid, och sparar dem i `capture/<datum>/det-log.txt` |
+| `node tools/grab.mjs <etikett>` | Sparar videobildruta + maskbild + tillstånd i `capture/<datum>/NN-<etikett>/` |
+| `node tools/reload.mjs "?debug&mask"` | Laddar om utan cache och säger vilket bygge som kom upp |
+| `node tools/ev.mjs "<uttryck>"` | Kör JS i fliken — läs av vad som helst utan att trycka på skärmen |
+
+**Kör igång så här, en gång i början:**
+
+```bash
+npm run phone:check          # åtgärda allt den klagar på först
+npm run phone:log            # låt den ligga och rulla i ett eget fönster
+```
+
+Sedan räcker det att du säger vad du gör — *"nu kastar jag tre i 20:an"* — så
+läses resultatet ur loggen. Ingen avskrift.
+
+### Att spara undan material
+
+`node tools/grab.mjs <etikett>` hämtar **exakt den bildruta appen matar in i
+sin egen kedja**, i samma format som fixturerna vi redan har (JPEG 0,92). Det
+är därför bilderna inte behöver gå via mobilens galleri.
+
+**Fotoparet är det som gör efterarbetet möjligt.** Ett par betyder: en
+`grab` med **tom tavla** och en med **felfallet**, utan att flytta stativet
+emellan. Då går hela diffkedjan att köra om offline — det var precis så hela
+förra arbetsdagen kunde göras utan tavla.
+
+```bash
+node tools/grab.mjs tom-tavla            # innan pilarna sitter i
+# ... kasta / handplacera ...
+node tools/grab.mjs pil-i-20-las-som-18  # direkt när något blir fel
+```
+
+Ta ett nytt `tom-tavla` varje gång stativet, zoomen eller ljuset har ändrats —
+ett par med olika framing är värdelöst.
+
+`capture/` är gitignorerad. Det som visar sig vara värt att behålla flyttas
+medvetet in som fixtur under `src/utils/__tests__/fixtures/` efteråt.
+
+### Rapporteringstakt
+
+- **Steg 0–3: ett steg i taget.** De är grindar. Sitter kalibreringen fel är
+  all mätdata därefter brus, och går något sönder i steg 3 ska det fixas innan
+  du kastar mer.
+- **Steg 4–8: samla ihop.** De är oberoende observationer. Kör igenom dem och
+  säg vad som såg konstigt ut, så läses loggen i efterhand.
+
+---
+
 ## Steg 0 — riggen, innan någonting annat (5 min)
 
 Två separata timmar har gått förlorade på att felsöka en app som inte körde.
 Gör det här varje gång.
 
+0. **`npm run phone:check`** gör punkt 3–6 nedan åt dig och säger vad som är fel.
+   Punkt 1 och 2 måste du göra själv.
 1. **Belysningsringen på.** Den är värd mer än all tröskeljustering: konturerna
    i masken gick från ~500 till 11, och bullen från 13 mm fel till 2 mm.
 2. **Stativ.** Handhållet överskrider rörelsetröskeln konstant och då
    registreras ingenting.
-3. **Rätt bygge.** `curl -s https://gkrallo.github.io/kps-dart-cam/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'` och jämför med fliken på telefonen. Ladda om vid behov.
-4. **`?debug` i URL:en.**
-5. **Kontrollera att videon faktiskt rullar** — `video.currentTime` ska öka.
-   Lita aldrig på debug-panelens siffror: de fryser på sina sista värden och en
-   frusen bild ser precis ut som en lugn tavla.
+3. **Rätt bygge.** `phone:check` jämför fliken mot det publicerade bygget.
+   Ligger det efter: `node tools/reload.mjs "?debug&mask"`.
+4. **`?debug&mask` i URL:en.** Utan `debug` loggar detektorn ingenting alls;
+   `mask` behövs för att `grab` ska få med maskbilden.
+5. **Kontrollera att videon faktiskt rullar** — `phone:check` mäter att
+   `video.currentTime` ökar. Lita aldrig på debug-panelens siffror: de fryser
+   på sina sista värden och en frusen bild ser precis ut som en lugn tavla.
 6. **Kontrollera skalan efter kalibrering:** tavlan ska vara ~800 px bred i
-   bilden (≈2,4 px/mm). Vid 1× var den 365 px och pilblobbarna låg precis på
-   gränsen att sållas bort som för små.
+   bilden (≈2,4 px/mm) — `phone:check` räknar ut det ur den sparade
+   kalibreringen. Vid 1× var den 365 px och pilblobbarna låg precis på gränsen
+   att sållas bort som för små.
+7. **Bara EN Chrome-flik får ha appen öppen.** En kvarglömd flik stjäl kameran
+   tyst och ger svart bild med en ström som påstår sig vara `live`.
+   `phone:check` varnar om den hittar flera.
 
 ---
 
@@ -174,15 +241,18 @@ Målet: en hel omgång utan att gå fram till telefonen.
 
 ## Om något går fel
 
-Två saker är guld värda och tar en minut:
+Loggen fångas redan av `phone:log`. Det enda du behöver göra:
 
-1. **Kopiera `?debug`-raden** för det misslyckade kastet. Den innehåller area,
-   bbox, antal konturer, elongation, axelkonfidens, skuggtest, avstämningens
-   utfall och vilken punkt som faktiskt blev poängen.
-2. **Ta ett foto med appens egen kamera** av (a) den tomma tavlan och (b)
-   felfallet, utan att flytta stativet emellan. Fixturerna från förra sessionen
-   är anledningen till att hela dagens arbete kunde göras utan tavla — de
-   bevisade silverskaftshypotesen fel och ledde till rätt fix.
+1. **Säg vad du gjorde** och ungefär när ("tredje pilen, skulle vara T20").
+   Raden finns redan i `capture/<datum>/det-log.txt` med klocktid — den
+   innehåller area, bbox, antal konturer, elongation, axelkonfidens,
+   skuggtest, avstämningens utfall och vilken punkt som faktiskt blev poängen.
+2. **`node tools/grab.mjs <etikett>`** direkt, medan pilen sitter kvar. Och ett
+   `tom-tavla`-par om det inte redan finns ett från samma uppställning.
+
+Fixturerna från förra sessionen är anledningen till att en hel arbetsdag kunde
+göras utan tavla — de bevisade silverskaftshypotesen fel och ledde till rätt
+fix. Det är billigt att ta för många och dyrt att sakna ett.
 
 Efter sessionen: stryk `?debug`-instrumenteringen ur `useDartDetector.ts` om
 detekteringen står sig, och gå vidare med rättnings-UX (missmarkering,

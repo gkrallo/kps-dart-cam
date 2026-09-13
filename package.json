@@ -10,7 +10,9 @@
     "opencv": "node scripts/copy-opencv.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "phone:check": "node tools/check.mjs",
+    "phone:log": "node tools/det-stream.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.546.0",
