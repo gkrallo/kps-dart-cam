@@ -65,7 +65,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   const editingEntry = editIdx !== null ? match.log.find((l) => l.ai === editIdx) : null;
 
   return (
-    <div className="bg-slate-900 border-t border-slate-800 shadow-[0_-10px_30px_rgba(0,0,0,0.6)] p-3 sm:p-4 flex flex-col gap-3 z-10 select-none">
+    <div className="bg-slate-900 border-t border-slate-800 shadow-[0_-10px_30px_rgba(0,0,0,0.6)] p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3 z-10 select-none">
       {editIdx !== null && (
         <ThrowEditor
           current={editingEntry ? editingEntry.dart : null}
@@ -305,7 +305,17 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
                       : 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
             }`}
           >
-            {detectorState}
+            {/* Svenska för gäster; det råa tillståndet finns i ?debug-panelen. */}
+            {(
+              {
+                INACTIVE: 'Av',
+                STABLE: 'Redo',
+                MOTION: 'Rörelse',
+                STABILIZING: 'Väntar',
+                ANALYZING: 'Läser av',
+                CLEARED: 'Tömd',
+              } as Record<string, string>
+            )[detectorState] ?? detectorState}
           </span>
 
           <div className="hidden sm:flex items-center gap-2 bg-slate-950/80 px-2.5 py-1 rounded-xl border border-slate-800 shrink-0">

@@ -118,8 +118,25 @@ export function throwDart(match: Match, dart: Seg): MatchState {
 }
 
 export function endTurn(match: Match): MatchState {
+  const before = matchState(match);
   match.actions.push({ t: 'E' });
-  return bump(match);
+  const st = bump(match);
+  // Ett 'E' som inte gav effekt (Farfar avslutar turen själv och vägrar; en
+  // avgjord match tar inte emot något) ska inte ligga kvar i listan. Annars
+  // fastnar 'undo' på det döda 'E':t - första "Ångra" tar bara bort det och
+  // ingenting syns hända - och vinst-effekten i App, som körs två gånger under
+  // StrictMode, lämnade två 'E' efter sig.
+  const noEffect =
+    st.finished === before.finished &&
+    st.currentIndex === before.currentIndex &&
+    st.currentDarts.length === before.currentDarts.length &&
+    st.turnNo === before.turnNo &&
+    st.round === before.round;
+  if (noEffect) {
+    match.actions.pop();
+    return bump(match);
+  }
+  return st;
 }
 
 /**
@@ -170,8 +187,17 @@ export function replaceThrow(match: Match, actionIndex: number, dart: Seg): Matc
  */
 export function insertThrow(match: Match, actionIndex: number, dart: Seg): MatchState {
   const at = Math.max(0, Math.min(actionIndex, match.actions.length));
+  const before = matchState(match).log.length;
   match.actions.splice(at, 0, { t: 'T', v: dart.v, m: dart.m });
-  return bump(match);
+  const st = bump(match);
+  // Samma regel som throwDart: fick pilen ingen effekt (turen var redan full
+  // i 301/501) ska den inte ligga kvar som ett dött kast som tyst dyker upp
+  // igen när någon annan pil i turen tas bort.
+  if (st.log.length === before) {
+    match.actions.splice(at, 1);
+    return bump(match);
+  }
+  return st;
 }
 
 /**
@@ -196,7 +222,22 @@ export function insertThrow(match: Match, actionIndex: number, dart: Seg): Match
  * Eventuella avslutande 'E' hoppas över, så pilen inte hamnar i NÄSTA spelares
  * tur om turen redan hunnit avslutas.
  */
-export function insertIndexForRevealedThrow(actions: MatchAction[]): number {
+export function insertIndexForRevealedThrow(actions: MatchAction[], state?: MatchState): number {
+  // Farfar har inga 'E' i listan: motorn stänger turen själv så fort målet
+  // (eller röd bull) nås. Är turen redan stängd när den dolda pilen hittas -
+  // vilket är precis läget när en pil saknas, för då nåddes målet med FÄRRE
+  // pilar än som kastades - skulle "sist i listan" lägga pilen som NÄSTA
+  // spelares första kast. Sätt den då in FÖRE pilen som stängde turen, så
+  // den stängande pilen förblir sist och spelaren får rätt antal sparade.
+  if (
+    state &&
+    state.currentDarts.length === 0 &&
+    state.log.length > 0 &&
+    actions.length > 0 &&
+    actions[actions.length - 1].t === 'T'
+  ) {
+    return state.log[state.log.length - 1].ai;
+  }
   let i = actions.length;
   while (i > 0 && actions[i - 1].t === 'E') i--;
   return i;
@@ -215,6 +256,16 @@ export function restoreMatch(data: unknown): Match | null {
   const d = data as Partial<Match> | null;
   if (!d || !d.config || !Array.isArray(d.actions)) return null;
   if (!d.config.players || !d.config.players.length) return null;
+  // Trasig lagring ska ge "ingen match", inte en x01-motor med start=undefined
+  // som tror att matchen är vunnen innan första pilen.
+  if (!(d.config.mode in START)) return null;
+  const validAction = (a: unknown): a is MatchAction => {
+    const x = a as { t?: unknown; v?: unknown; m?: unknown } | null;
+    if (!x || typeof x !== 'object') return false;
+    if (x.t === 'E') return true;
+    return x.t === 'T' && typeof x.v === 'number' && typeof x.m === 'number';
+  };
+  if (!d.actions.every(validAction)) return null;
   return {
     id: d.id ?? 'm' + Date.now(),
     createdAt: d.createdAt ?? new Date().toISOString(),

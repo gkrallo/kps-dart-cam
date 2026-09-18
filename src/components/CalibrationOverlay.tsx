@@ -498,7 +498,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           )}
         </div>
 
-        <div className="absolute bottom-3 left-3 right-3 pointer-events-auto flex items-center justify-center gap-2 z-20">
+        <div className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 right-3 pointer-events-auto flex items-center justify-center gap-2 z-20">
           <button
             onClick={handleAutoZoomToBoard}
             disabled={isZoomingToBoard}
@@ -844,7 +844,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       )}
 
       {/* BOTTOM FLOATING CONTROL BAR */}
-      <div className="absolute bottom-3 left-3 right-3 pointer-events-auto z-20 bg-slate-950/90 backdrop-blur-md border border-slate-800/80 p-2 sm:p-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-2">
+      <div className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 right-3 pointer-events-auto z-20 bg-slate-950/90 backdrop-blur-md border border-slate-800/80 p-2 sm:p-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-2">
         {/* Left Side: Point Selector Tabs & Fine-Tune D-Pad Toggle */}
         <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto py-0.5">
           {labels.map((lbl, idx) => (
@@ -882,7 +882,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/30 flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0"
         >
           <CheckCircle2 className="w-4 h-4 text-white" />
-          <span>Starta Spel</span>
+          <span>Spara kalibrering</span>
         </button>
       </div>
     </div>

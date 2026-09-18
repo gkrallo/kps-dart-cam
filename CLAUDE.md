@@ -132,6 +132,7 @@ public/                       Ikoner, manifest. opencv.js hamnar här (gitignore
 .github/workflows/deploy.yml  Test → bygge → deploy till Pages
 AGENT.md                      Arkitektur + lista över kända begränsningar
 TESTPLAN.md                   Ordnad genomgång att köra vid tavlan (otestat -> testat)
+GRANSKNING.md                 Granskning 2026-09-18: rättat, hypoteser (D1-D8, K1-K6, S1-S4, U1-U9), metodjämförelse
 ```
 
 `dartMath.ts` är märkt med ★ för att den innehåller enda sanningskällan för
@@ -144,7 +145,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 290 tester
+npm test         # 300 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -273,7 +274,7 @@ doubleOuter 170
    hjulet till en godtycklig vinkel i *tavlans* plan - inte i bilden, för
    under perspektiv är det inte samma sak. (Den gjorde tidigare bara
    kvartssteg och var därmed oanvändbar mot det här felet.)
-3. Vid "Starta spel" konverterar `App.tsx` skärmkoordinater till
+3. Vid "Spara kalibrering" konverterar `App.tsx` skärmkoordinater till
    videokoordinater. Videon visas med `object-cover`, alltså skalad med
    `Math.max(cw/vw, ch/vh)` och centrerad — samma formel måste användas åt båda
    håll, annars glider kalibreringen.
@@ -392,7 +393,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Analyströskel | 10 | `useDartDetector` (`RAW_DIFF_THRESHOLD`) | **Uppmätt av oss** (sänkt från 15) 2026-09-12: Kristians pilar har silvrigt skaft och svart vinge, och silver mot tavlans gräddvita fält ligger under 15 gråvärden. Då föll skaftet ur masken och bara vingen blev kvar - en kompakt blob vars tyngdpunkt gav fel fält (en 4:a lästes som T13). Vid 10 kom hela pilen med i 2 av 3 kast. Kostnad: fler konturer i masken (38 → 491), men med belysningsring föll det till 11. |
 | `baselineNoise` | > 500 | `useDartDetector` | Ärvd. Gränsen för "något har tillkommit" som gör att STABILIZING→ANALYZING triggas. |
 | Stabiliseringstid | 500 ms | `useDartDetector` | Ärvd. Rimlig — en pil landar och står still. |
-| Uppstartsspärr | 2000 ms | `useDartDetector` (`STARTUP_GRACE_MS`) | **Tillagd av oss**, uppmätt: användaren rör sig ofta fortfarande i bild direkt efter "Starta spel", och den skillnaden tolkades som en pil. |
+| Uppstartsspärr | 2000 ms | `useDartDetector` (`STARTUP_GRACE_MS`) | **Tillagd av oss**, uppmätt: användaren rör sig ofta fortfarande i bild direkt efter "Spara kalibrering", och den skillnaden tolkades som en pil. |
 | Baseline-drift | 15 s helt orörd, `baselineNoise` < 120 & `movementNoise` < 200 | `useDartDetector` | **Justerad av oss** (från 4 s) - för snabb ätit en pil som ännu inte hunnit analyseras. |
 | Konturarea (rå bild) | 0,02–2,5 % av bildytan | `useDartDetector` (`minArea`/`maxArea`) | **Uppmätt av oss**: riktiga kast från stativet mätte 7 000–19 000 px i en 1080×1920-bild (≈0,3–1 %). maxArea sänkt från 5 % → 2,5 % sedan en arm vid pilhämtning (~80 000 px) annars räknades som pil. |
 | Skuggtest: korrelation | ≥ 0,75 | `shadowTest.ts` | **Satt av oss**, verifierat mot syntetiska skuggor över en renderad tavla (`shadowTest.test.ts`), ej mot hårdvara. En skugga låter tavlans mönster lysa igenom (`cur ≈ k · base`), en pil ersätter ytan och korrelationen kollapsar. |
@@ -421,7 +422,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 290 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 300 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.

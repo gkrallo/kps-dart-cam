@@ -142,6 +142,11 @@ function advance(st: MatchState, cfg: MatchConfig): void {
   const alive = st.players.filter((p) => !p.eliminated);
 
   if (alive.length === 0) {
+    // Ensam spelare som slås ut har ingen att vinna mot.
+    if (st.players.length === 1) {
+      st.winners = [];
+      return end(st, round);
+    }
     const died = st.players.filter((p) => p.eliminatedRound === round);
     const best = died.reduce((m, p) => Math.max(m, p.roundScore ?? 0), -1);
     st.winners = died.filter((p) => (p.roundScore ?? 0) === best).map((p) => p.name);

@@ -15,7 +15,7 @@ const SECTIONS: Section[] = [
     icon: Crosshair,
     title: 'Kalibrering',
     body:
-      'Sikta tripoden mot bullseye och tryck "Sikte" – appen hittar tavlan och zoomar in lagom. Punkterna ska ligga på dubbelringens ytterkant vid mitten av 20 (topp), 6 (höger), 3 (botten) och 11 (vänster). Viktigt: döm av de streckade sektorlinjerna mot tavlans riktiga trådar, inte av den blå ringen – formen kan se perfekt ut medan hela sektorhjulet är vridet. Sitter det snett, tryck "Peka ut 20:an" och peka där 20:an faktiskt sitter.',
+      'Sikta stativet så hårkorset ligger på bullseye och tryck "Zooma till tavlan" – appen hittar tavlan och zoomar in lagom. Tryck sedan "Auto" eller dra punkterna till dubbelringens ytterkant vid mitten av 20 (topp), 6 (höger), 3 (botten) och 11 (vänster). Viktigt: döm av de streckade sektorlinjerna mot tavlans riktiga trådar, inte av den blå ringen – formen kan se perfekt ut medan hela sektorhjulet är vridet. Sitter linjerna snett, tryck "Rikta in sektorer" (kompassikonen) så läser appen av ringarnas färger och vrider hjulet rätt. Går det inte, tryck "Peka ut 20:an" och peka där 20:an sitter. "Spara kalibrering" sparar allt, även zoomen, till nästa gång.',
   },
   {
     icon: Ear,

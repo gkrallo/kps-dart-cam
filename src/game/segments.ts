@@ -100,7 +100,8 @@ export function checkout(
 ): Seg[] | null {
   if (!(remaining > 0) || dartsLeft < 1) return null;
   if (doubleOut && remaining < 2) return null;
-  if (remaining > 170) return null;
+  // 170 är högsta utgång med dubbel; rak utgång kan ta 180 (T20 T20 T20).
+  if (remaining > (doubleOut ? 170 : 180)) return null;
   const finishes = doubleOut ? FINISH_DOUBLES : FINISH_ANY;
   return (
     search(remaining, dartsLeft, finishes, SETUP_NO_BULL) ||

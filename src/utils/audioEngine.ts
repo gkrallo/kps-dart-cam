@@ -3,6 +3,12 @@
 class AudioEngine {
   private synth: SpeechSynthesis | null = null;
   private audioCtx: AudioContext | null = null;
+  /**
+   * Referenser till köade yttranden. Chrome kan skräpsamla en
+   * SpeechSynthesisUtterance som ingen håller i innan den spelats, och då
+   * klipps kön mitt i en turs uppläsning.
+   */
+  private pending: SpeechSynthesisUtterance[] = [];
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -24,10 +30,43 @@ class AudioEngine {
     return this.audioCtx;
   }
 
-  /** Väcker ljudet vid första användartryck (krav i iOS/Safari). */
+  /**
+   * Väcker ljudet vid första användartryck (krav i iOS/Safari, och Chrome
+   * blockerar speechSynthesis.speak() tills sidan haft en användaraktivering).
+   * Anropas från varje knapp som startar spel OCH från en engångslyssnare på
+   * första pekningen (App), för att en tyst återupptagen match annars aldrig
+   * får ett tryck alls och hela matchen blir tyst.
+   */
   public unlock() {
     const ctx = this.getAudioContext();
     if (ctx && ctx.state === 'suspended') ctx.resume();
+    if (this.synth) {
+      try {
+        this.synth.resume();
+        if (!this.synth.speaking && !this.synth.pending) {
+          const u = new SpeechSynthesisUtterance('');
+          u.volume = 0;
+          this.synth.speak(u);
+        }
+      } catch {
+        /* inte kritiskt */
+      }
+    }
+  }
+
+  /** Köar ett yttrande och håller referensen tills det spelats. */
+  private enqueue(u: SpeechSynthesisUtterance) {
+    if (!this.synth) return;
+    const done = () => {
+      this.pending = this.pending.filter((x) => x !== u);
+    };
+    u.onend = done;
+    u.onerror = done;
+    this.pending.push(u);
+    // Efter ett appbyte kan talsyntesen ligga pausad; ett resume() är
+    // harmlöst när den inte är det.
+    this.synth.resume();
+    this.synth.speak(u);
   }
 
   /** Kort ton via Web Audio. */
@@ -121,7 +160,7 @@ class AudioEngine {
       u.rate = 1.05;
       const sv = this.synth.getVoices().find((v) => v.lang.startsWith('sv'));
       if (sv) u.voice = sv;
-      this.synth.speak(u);
+      this.enqueue(u);
     } catch (e) {
       console.warn('TTS error:', e);
     }
@@ -137,10 +176,12 @@ class AudioEngine {
     try {
       if (opts.cancel) this.synth.cancel();
 
+      // Samma ord som pilraden och Turer använder (segments.label): i Farfar
+      // är "röd bull" det som betyder något, och "Missa!" var inte svenska.
       let text = `${totalPoints}`;
-      if (label === 'DB') text = 'Dubbel Bull!';
-      else if (label === '25') text = 'Enkel Bull';
-      else if (label === 'MISS') text = 'Missa!';
+      if (label === 'DB') text = 'Röd bull!';
+      else if (label === '25') text = 'Grön bull';
+      else if (label === 'MISS') text = 'Miss';
       else if (label.startsWith('T')) text = `Trippel ${label.slice(1)}`;
       else if (label.startsWith('D')) text = `Dubbel ${label.slice(1)}`;
 
@@ -156,7 +197,7 @@ class AudioEngine {
         utterance.voice = svVoice;
       }
 
-      this.synth.speak(utterance);
+      this.enqueue(utterance);
     } catch (e) {
       console.warn('TTS error:', e);
     }

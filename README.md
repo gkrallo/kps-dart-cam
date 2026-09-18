@@ -9,7 +9,7 @@ kostnad. Kamerabilder lämnar aldrig telefonen.
 ## Status
 
 Fungerar, men är inte färdigtrimmat. Geometrin och regelmotorn är verifierade
-mot 290 tester; datorseendet är verifierat på riktig hårdvara i några
+mot 300 tester; datorseendet är verifierat på riktig hårdvara i några
 sessioner och har fortfarande kända hål.
 
 **Fungerar:**
@@ -65,7 +65,7 @@ https:// eller på localhost. Använd `mkcert` för ett lokalt certifikat, eller
 testa mot den publicerade Pages-versionen.
 
 ```bash
-npm test          # 290 tester: geometri, kalibrering, spetsdetektering, regelmotor
+npm test          # 300 tester: geometri, kalibrering, spetsdetektering, regelmotor
 npm run lint      # tsc --noEmit, strict mode
 npm run build     # produktionsbygge till dist/
 ```

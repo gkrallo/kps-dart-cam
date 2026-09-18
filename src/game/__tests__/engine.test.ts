@@ -10,7 +10,10 @@ import {
   replaceThrow,
   insertThrow,
   insertIndexForRevealedThrow,
+  restoreMatch,
+  serializeMatch,
 } from '../match';
+import { segFromDartScore } from '../index';
 import { farfarEngine, targetFor } from '../farfar';
 import type { GameMode, Match } from '../types';
 
@@ -256,5 +259,145 @@ describe('Farfar - grunder', () => {
     [5, 5, 4].forEach((v) => t(m, v));
     [5, 5, 4].forEach((v) => t(m, v));
     expect(matchState(m).winners).toEqual(['A', 'B']);
+  });
+});
+
+describe('granskning 2026-09-18: hål mellan event-sourcingen och motorerna', () => {
+  it('Farfar: en dold pil som hittas efter att turen stängts hamnar hos rätt spelare', () => {
+    // A kastar 5, 5 (dold), 10. Appen ser [5, 10] = 15 -> turen stängs, A
+    // sparar 1 pil, B står på tur. Vid uttagningen avslöjas 5:an.
+    const m = mk('FARFAR', ['A', 'B']);
+    t(m, 5);
+    t(m, 10);
+    expect(matchState(m).active.name).toBe('B');
+    expect(player(m, 'A').savedDarts).toBe(1);
+
+    const idx = insertIndexForRevealedThrow(m.actions, matchState(m));
+    expect(idx).toBe(1); // före pilen som stängde turen, inte sist i listan
+    insertThrow(m, idx, { v: 5, m: 1 });
+
+    expect(player(m, 'A').savedDarts).toBe(0);
+    expect(player(m, 'A').dartsThrown).toBe(3);
+    expect(matchState(m).active.name).toBe('B');
+    expect(matchState(m).currentDarts).toEqual([]); // B har inte kastat
+  });
+
+  it('Farfar: samma sak när röd bull stängde turen', () => {
+    const m = mk('FARFAR', ['A', 'B']);
+    t(m, 5);
+    t(m, 25, 2); // röd bull stänger, 1 sparad
+    expect(player(m, 'A').savedDarts).toBe(1);
+    insertThrow(m, insertIndexForRevealedThrow(m.actions, matchState(m)), { v: 1, m: 1 });
+    expect(player(m, 'A').savedDarts).toBe(0);
+    expect(matchState(m).active.name).toBe('B');
+  });
+
+  it('301/501: en öppen tur sätter fortfarande in sist', () => {
+    const m = mk('501', ['A', 'B']);
+    t(m, 20, 3);
+    t(m, 1);
+    expect(insertIndexForRevealedThrow(m.actions, matchState(m))).toBe(2);
+    endTurn(m);
+    expect(insertIndexForRevealedThrow(m.actions, matchState(m))).toBe(2);
+  });
+
+  it('insertThrow i en redan full 301/501-tur lämnar inget dött kast', () => {
+    const m = mk('501', ['A', 'B']);
+    [0, 1, 2].forEach(() => t(m, 20, 3));
+    endTurn(m);
+    t(m, 1);
+    const before = m.actions.length;
+    insertThrow(m, 3, { v: 5, m: 1 }); // "+" efter A:s tredje pil
+    expect(m.actions.length).toBe(before);
+    expect(player(m, 'A').score).toBe(321);
+    expect(matchState(m).currentDarts).toEqual([{ v: 1, m: 1 }]); // B:s tur orörd
+  });
+
+  it('endTurn som inte ger effekt lämnar inget dött E, så ångra fungerar', () => {
+    const farfar = mk('FARFAR', ['A', 'B']);
+    t(farfar, 5);
+    endTurn(farfar); // Farfar vägrar
+    expect(farfar.actions.length).toBe(1);
+
+    const m = mk('301', ['A']);
+    t(m, 20, 3);
+    t(m, 20, 3);
+    t(m, 20, 3); // 121 kvar
+    endTurn(m);
+    t(m, 20, 3);
+    t(m, 20, 3);
+    t(m, 1); // 0 -> vinst (rak utgång)
+    endTurn(m);
+    expect(matchState(m).finished).toBe(true);
+    endTurn(m); // App-effekten körs två gånger under StrictMode
+    endTurn(m);
+    expect(m.actions.filter((a) => a.t === 'E').length).toBe(2);
+    undo(m);
+    expect(matchState(m).finished).toBe(false);
+    expect(matchState(m).currentDarts.length).toBe(3);
+  });
+
+  it('utgångsförslag: rak utgång får ta 171-180', () => {
+    expect(co(180, 3, false)).toBe('T20 T20 T20');
+    expect(co(171, 3, false)).not.toBeNull();
+    expect(co(171, 3, true)).toBeNull();
+    expect(co(170, 3, true)).toBe('T20 T20 Röd');
+  });
+
+  it('Farfar med en spelare: den utslagne utropas inte till vinnare', () => {
+    const m = mk('FARFAR', ['A']);
+    [0, 0, 0].forEach((v) => t(m, v));
+    expect(matchState(m).finished).toBe(true);
+    expect(matchState(m).winners).toEqual([]);
+  });
+
+  it('Farfar-taket: efter runda 18 vinner flest sparade pilar', () => {
+    const m = mk('FARFAR', ['A', 'B'], { farfarCap: true });
+    // Röd bull stänger turen direkt oavsett mål, så varje spelare sparar
+    // available-1 pilar per runda. A missar en gång i runda 1.
+    t(m, 0);
+    t(m, 25, 2);
+    t(m, 25, 2);
+    for (let r = 2; r <= 18; r++) {
+      t(m, 25, 2);
+      t(m, 25, 2);
+    }
+    expect(matchState(m).finished).toBe(true);
+    expect(matchState(m).winners).toEqual(['B']);
+    expect(player(m, 'B').savedDarts).toBe((player(m, 'A').savedDarts ?? 0) + 1);
+  });
+
+  it('Farfar: sparade pilar staplas över rundor', () => {
+    const m = mk('FARFAR', ['A', 'B']);
+    t(m, 20, 3); // A: 60, sparar 2
+    t(m, 20, 3); // B
+    expect(matchState(m).view.available).toBe(5);
+    t(m, 20, 3); // A runda 2: sparar 4 -> 7 nästa runda
+    t(m, 20, 3);
+    expect(matchState(m).view.available).toBe(7);
+  });
+
+  it('restoreMatch förkastar trasig lagring', () => {
+    const m = mk('501', ['A', 'B']);
+    t(m, 20, 3);
+    endTurn(m);
+    const ok = restoreMatch(JSON.parse(JSON.stringify(serializeMatch(m))));
+    expect(ok).not.toBeNull();
+    expect(matchState(ok!).players[0].score).toBe(441);
+
+    const badMode = { ...serializeMatch(m), config: { ...m.config, mode: 'CRICKET' } };
+    expect(restoreMatch(badMode)).toBeNull();
+    const badAction = { ...serializeMatch(m), actions: [{ t: 'T', v: 'x', m: 1 }] };
+    expect(restoreMatch(badAction)).toBeNull();
+  });
+
+  it('segFromDartScore: bryggan från datorseendet', () => {
+    const mk2 = (label: string, baseScore: number, multiplier: number) => ({
+      label, baseScore, multiplier, totalPoints: baseScore * multiplier, coordinates: { x: 0, y: 0 },
+    });
+    expect(segFromDartScore(mk2('DB', 25, 2))).toEqual({ v: 25, m: 2 });
+    expect(segFromDartScore(mk2('25', 25, 1))).toEqual({ v: 25, m: 1 });
+    expect(segFromDartScore(mk2('MISS', 0, 0))).toEqual({ v: 0, m: 1 });
+    expect(segFromDartScore(mk2('T20', 20, 3))).toEqual({ v: 20, m: 3 });
   });
 });

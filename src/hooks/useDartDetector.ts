@@ -1102,7 +1102,18 @@ const STARTUP_GRACE_MS = 2000;
           else if (now - calmSince > 15000) {
             gray.copyTo(baseline);
             if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
-            if (dartsThisCycle === 0) gray.copyTo(emptyBaseline);
+            // Referensen för TOM tavla får bara uppdateras när tavlan faktiskt
+            // är tom. `dartsThisCycle === 0` räcker inte: en pil som landat
+            // men förkastats av analysen (eller aldrig känts igen) ger också
+            // noll registrerade pilar, och `baseline` sattes till bilden MED
+            // pilen direkt efter analysen, så scenen ser lugn ut. Skrevs
+            // emptyBaseline över då blev `emptyPx` noll med pilarna kvar i
+            // tavlan, uthållighetskravet (MATERIAL_HOLD_MS) var redan
+            // uppfyllt, och turen avslutades 15 s efter kastet medan
+            // spelaren stod kvar och kastade - precis det fall
+            // uthållighetskravet byggdes för. `materialSince` är noll bara
+            // när tom-tavla-kollen senast såg tavlan tom.
+            if (dartsThisCycle === 0 && materialSince === 0) gray.copyTo(emptyBaseline);
             calmSince = now;
             if (debugRef.current) console.log('[det] baseline uppdaterad (drift)');
           }

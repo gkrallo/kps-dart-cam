@@ -126,7 +126,7 @@ export function GameSetup({ onStart, onSkip, onHelpClick }: Props) {
 
         {onSkip && (
           <button onClick={onSkip} className="text-xs text-slate-500 hover:text-slate-300 py-1">
-            Hoppa över – bara avläsning utan spel
+            Tillbaka till matchen
           </button>
         )}
       </div>

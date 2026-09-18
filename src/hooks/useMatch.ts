@@ -70,7 +70,11 @@ function save(match: Match | null): void {
  * listredigeringar och en omräkning.
  */
 export function useMatch() {
-  const initial = useRef(load()).current;
+  // Lat: `useRef(load())` hade kört load() - JSON.parse + restoreMatch - på
+  // VARJE rendering och kastat bort resultatet efter den första.
+  const initialRef = useRef<ReturnType<typeof load> | null>(null);
+  if (initialRef.current === null) initialRef.current = load();
+  const initial = initialRef.current;
   const ref = useRef<Match | null>(initial.match);
   /** Millisekunder sedan epoch för senaste ändringen av den SPARADE matchen. */
   const lastPlayedAtRef = useRef<number | null>(initial.lastPlayedAt);
@@ -94,12 +98,18 @@ export function useMatch() {
     bump();
   }, [bump]);
 
+  /**
+   * `accepted` säger om motorn tog emot kastet. Efter tjock, vinst eller en
+   * full tur poppas kastet ur listan igen (se match.throwDart), och då ska
+   * appen inte spela pil-ljud och läsa upp en poäng som inte räknas.
+   */
   const throwSeg = useCallback(
-    (seg: Seg): MatchState | null => {
+    (seg: Seg): { state: MatchState; accepted: boolean } | null => {
       if (!ref.current) return null;
+      const before = matchState(ref.current).log.length;
       const st = throwDart(ref.current, seg);
       bump();
-      return st;
+      return { state: st, accepted: st.log.length > before };
     },
     [bump],
   );
