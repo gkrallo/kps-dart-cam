@@ -484,3 +484,38 @@ rakt av får ringarna olika relativa fel och passningen kompromissar.
 
 Allt detta är verifierat med tester och mot den verkliga bildrutan, men
 inte med en enda pil i tavlan. Testordningen står i `TESTPLAN.md`:s banner.
+
+### Två fel till, hittade i den riktiga matchen senare samma kväll
+
+Kristian och vännerna spelade vidare på det nya bygget med loggen igång.
+Båda felen hittades, mättes mot sparade bildrutor och rättades samma kväll.
+
+**"D3 blev 18."** Vision-vyn visade P3 på D3, alltså var spetsen rätt;
+18:an kom från en separat registrering som sedan glömdes. När pil 3 slog i
+vibrerade tavlan, pilen i 1:an flyttade sig någon pixel, och diffen mot förra
+bilden visade en smal remsa längs dess kropp med "spetsen" vid vingen i
+sektor 18. Remsan registrerades, den riktiga D3 kom in i en full tur och
+räknades inte, och avstämningen tog bort remsan som "uttagen". Rättat med
+`priorMaterialFraction`: en blobb som till > 50 % ligger där det REDAN fanns
+material är en pil som rört sig, inte ett nytt kast. Loggen visar numera
+"fanns före N %" för varje registrering (0–2 % för riktiga kast efteråt).
+Samma vibration sågs direkt igen: hela S15-pilen dök upp som "ny" skillnad
+1 px från sin registrering och stoppades av 12 px-spärren.
+
+**"T15 blev S15 på 98,5 mm."** Sektorn var rätt, radien 1–6 mm för kort.
+Fotoparet (tom tavla + pil, `scripts/tip-profile.ts`) visar varför:
+pilkroppen är 100–140 gråvärden ljusare än tavlan, stålspetsen nästan
+neutral, och sedan följer 12 px som är 13–34 gråvärden **mörkare än den tomma
+tavlan men med tavlans mönster**: pilens skugga, som med ringlampan faller
+inåt mot bullen. Den tas med i masken (tröskel 10), binds ihop med pilen av
+morfologin, och axelmetodens extrempunkt hamnar i skuggans ände, 6 mm för
+långt in. `trimShadowAtTip` går bakåt längs axeln förbi allt som inte är
+pilmaterial; samma bildpar ger då 105,9 mm, i trippeln. Kvar är ~1 mm i
+sidled: PCA-axeln går genom blobbens tyngdpunkt, och skuggremsan längs ena
+sidan drar den åt skuggsidan. Det är nästa förbättring (S1 i avsnitt 3:
+axel ur pilkroppen, inte hela blobben).
+
+**"S18 blev S4."** Spetsen lästes 46° på 27 mm radie; tråden ligger på 45°.
+Så nära bullen är 1° en halv millimeter, och precisionen är omkring en
+millimeter. Inget fel att rätta i detektorn; det är fallet för
+osäkerhetsflaggan ("18 eller 4?") på avstånd till närmaste tråd.

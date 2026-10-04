@@ -20,6 +20,13 @@
 > med spetsarna 5–10 mm isär, kastade var för sig, blir två kast; (2) dra ut
 > en av dem, ingen spökpil ur hålet; (3) ensam kvarvarande pil som satt
 > skymd läses om och rättas högt; (4) Auto → Finjustera visar "låg X mm fel".
+>
+> **Riktig match senare samma kväll** gav två fel till, båda rättade samma
+> kväll: en pil som rört sig av vibration registrerades som nytt kast (nu
+> `priorMaterialFraction`), och pilens skugga vid spetsänden drog radien 6 mm
+> inåt (nu `trimShadowAtTip`). **Testa nästa gång:** pilar i trippelringen
+> över ljusa fält, radien ska nu hamna i ringen; och tre snabba kast nära
+> varandra ska inte ge en fjärde "pil".
 
 Skriven 2026-09-18 efter granskningen (`GRANSKNING.md`), som ersättning för
 planen från 2026-09-12. Sedan senaste hårdvarusessionen (2026-09-12) har
