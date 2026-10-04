@@ -145,11 +145,14 @@ export function useMatch() {
     [bump],
   );
 
+  /** Returnerar true om kastet faktiskt kom in i kastlistan (turen var inte full). */
   const insertMissingThrow = useCallback(
-    (actionIndex: number, seg: Seg) => {
-      if (!ref.current) return;
+    (actionIndex: number, seg: Seg): boolean => {
+      if (!ref.current) return false;
+      const before = ref.current.actions.length;
       insertThrow(ref.current, actionIndex, seg);
       bump();
+      return ref.current.actions.length > before;
     },
     [bump],
   );

@@ -11,6 +11,15 @@
 > hade 10 mm och gav korrekt "bara 1 av 3 pilar avlästa" i stället), och varför
 > tömd-signalen uteblev en gång i tur 1 (nu loggas `emptyPx`). Resultat per
 > steg i `GRANSKNING.md` avsnitt 8.
+>
+> **Byggt samma kväll efter sessionen, otestat på hårdvara (`GRANSKNING.md`
+> avsnitt 9):** hål-mot-material-test så att pilar kan sitta tätare än 13 mm,
+> självrättning av en ensam kvarvarande pil ("Rättar: 6 blir 10"), och
+> "Finjustera" som passar kalibreringen mot ringkanterna (mätt på kvällens
+> bild: bottenfelet 3 mm → 0,3 mm). **Testa först nästa gång:** (1) två pilar
+> med spetsarna 5–10 mm isär, kastade var för sig, blir två kast; (2) dra ut
+> en av dem, ingen spökpil ur hålet; (3) ensam kvarvarande pil som satt
+> skymd läses om och rättas högt; (4) Auto → Finjustera visar "låg X mm fel".
 
 Skriven 2026-09-18 efter granskningen (`GRANSKNING.md`), som ersättning för
 planen från 2026-09-12. Sedan senaste hårdvarusessionen (2026-09-12) har

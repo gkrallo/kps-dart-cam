@@ -122,11 +122,13 @@ src/
     dartCensus.ts             Positionsbaserad avstämning: vilka pilar sitter faktiskt i tavlan
     shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
     calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
+    ringRefine.ts             Finjustering av kalibreringen mot ringkanterna i bilden (många strålar + LM)
     syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
     __tests__/                Vitest
 
 scripts/copy-opencv.mjs       Kopierar opencv.js från node_modules till public/
+scripts/measure-rings.ts      Mäter kalibreringens radiella fel mot en riktig bildruta (npx vite-node), se ringRefine.ts
 tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md
 public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
 .github/workflows/deploy.yml  Test → bygge → deploy till Pages
@@ -145,7 +147,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 300 tester
+npm test         # 305 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -409,8 +411,12 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Dubbeldetekterings-spärr | 1000 ms **och** 30 px (~13 mm) från senast registrerade pil | `useDartDetector` (`MIN_DART_SPACING_PX`) | **Tillagd av oss**: samma pil registrerades om medan den svängde in sig efter landning. |
 | Främmande föremål i bild | > 25 000 skilda rå-pixlar mot förra bilden, i upp till 8 s | `useDartDetector` (`HAND_PX`, `HAND_PATIENCE_MS`) | **Uppmätt av oss** 2026-10-04: en pil ger 7 000–14 000, en arm som står stilla vid handplacering/uttagning 47 000–137 000. Alla kvällens spökkast kom ur analyser av sådana bildrutor (armen skymde en känd pil → "uttagen" + "dold pil"). Så länge skillnaden är så stor skjuts analysen upp utan att referensen uppdateras; ligger den kvar > 8 s är det ett ljusskifte och hela bilden tas upp i referensen. |
 | Avstämning: sammansmält blobb | area > 1,5 × största kända pil | `useDartDetector` (`runCensus`) | **Uppmätt av oss** 2026-10-04: två pilar som nuddar varandra i bild blir EN blobb mot den tomma tavlan (13 700 px mot 7 500 för en pil). Blobben parades med den ena pilen och den andra bokfördes som uttagen fast den satt kvar. Nu svarar avstämningen "osäker" och pixelheuristiken (diff mot förra bilden, där pilarna är åtskilda) får avgöra. Spetsen för ett nytt kast tas alltid ur diffen mot förra bilden, aldrig ur blobben mot tom tavla. |
+| Hål eller material | ≥ 50 % av blobbens egna pixlar skiljer sig från TOM tavla | `useDartDetector` (`materialFraction`, `MATERIAL_MIN_FRACTION`) | **Satt av oss** 2026-10-04. Ersätter positionsspärren på 30 px som hål-skydd: `absdiff` är symmetriskt, så hålet efter en uttagen pil ser ut som pilen i diffen mot förra bilden, men mot den tomma tavlan är hålet tavlan igen (lite skillnad) medan en pil täcker den (stor skillnad). Testas bara på maskens pixlar så en grannpil i samma rektangel inte stör. Gör att pilar kan sitta tätare än 13 mm. |
+| Spärr för nya kast | 12 px (~5 mm) från en registrerad spets | `useDartDetector` (`NEW_THROW_SPACING_PX`) | **Sänkt av oss** 2026-10-04 från 30 px: 10 mm mellan spetsarna är vanligt, och hål-skyddet sköts nu av materialtestet. Fångar fortfarande "samma pil svänger in sig" (1–3 px). |
+| Självrättning av ensam pil | 1 känd + 1 sedd, area 0,6–1,6×, axelkonfidens ≥ 0,6, flytt ≥ 8 px, annat fält | `useDartDetector` (`actOnCensus`, `onDartCorrected`) | **Satt av oss** 2026-10-04 på Kristians önskemål. När en pil står ensam kvar vid uttagningen syns hela silhuetten för första gången; läses den då i ett annat fält rättas kastet och sägs högt ("Rättar: 6 blir 10"). Kräver att pilarna dras ut en i taget med armen ur bild. |
+| Finjustering mot ringkanter | 360 strålar, ±12 mm, trådbredd 0,6 mm, 3 varv | `ringRefine.ts` (`refineCalibrationOnRings`) | **Uppmätt av oss** 2026-10-04: ellipsmetoden lade bottenpunkten 3 mm fel på Kristians tavla (ytterkanten lästes 167 mm nertill, 170 runt om) utan att det syntes på wireframets form. Efter passning mot dubbel- och trippelringens ytterkanter ±0,3 mm i alla kvadranter. Körs sist i Auto och via knappen "Finjustera". Färgkanten sitter 0,6 mm innanför den nominella radien (tråden täcker gränsen); utan den korrektionen får ringarna olika relativa fel och passningen kompromissar till 1,4 mm. |
 | Nyss glömd pil | 20 s, 60 px | `useDartDetector` (`RECENTLY_FORGOTTEN_MS`) | **Satt av oss** 2026-10-04 efter att en pil avstämningen just glömt "hittades" igen som dold pil och ett kast sattes in. En pil som varit känd får inte återuppstå som dold inom kort. |
-| Avstämning: hopparningsavstånd | 40 px (~17 mm) | `dartCensus.ts` (`DEFAULT_MATCH_PX`) | **Satt av oss.** Något mer än `MIN_DART_SPACING_PX` (30): samma pil kan mätas några pixlar isär mellan två analyser, och en missad hopparning blir BÅDE en falsk uttagning och ett falskt nytt kast. |
+| Avstämning: hopparningsavstånd | 25 px (~10 mm) | `dartCensus.ts` (`DEFAULT_MATCH_PX`) | **Sänkt av oss** 2026-10-04 från 40: samma pil mättes 1–3 px isär mellan analyser (9 px när blobben smält ihop med en granne), medan 40 px parade en ny tätt sittande pil med grannen så den aldrig registrerades. En missad hopparning blir BÅDE en falsk uttagning och ett falskt nytt kast, så gå inte lägre utan mätning. |
 | Avstämning: riktningsgolv | 0,02 % av bildytan (samma som `minArea`) | `useDartDetector` (`runCensus`) | **Satt av oss.** Ändras antalet skilda pixlar mot den tomma tavlan mindre än så mellan två analyser räknas riktningen som okänd. |
 | Texturtröskel | stddev < 38 | `boardDetector` | Ärvd. Ska sålla bort släta ytor (väggar, tyg) vid tavledetektering. |
 | HoughCircles | dp=1, minDist=minRadius, param1=100, param2=30 | `boardDetector` | Ärvd. param2=30 är lågt och ger många falska cirklar. |
@@ -425,7 +431,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 300 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 305 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.

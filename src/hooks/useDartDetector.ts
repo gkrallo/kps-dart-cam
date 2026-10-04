@@ -42,6 +42,10 @@ interface TipFind {
   area: number;
   /** ?debug-siffrorna för JUST den här kandidaten (se registerNewThrow). */
   diag: string;
+  /** Maskbilden (CV_8UC1) blobben hittades i - för hål-mot-material-testet. */
+  mask: any;
+  /** Axelmetodens konfidens, 0 när tyngdpunkten användes. */
+  confidence: number;
 }
 
 export const useDartDetector = (
@@ -51,7 +55,7 @@ export const useDartDetector = (
   isActive: boolean,
   motionThreshold: number,
   debugCanvasRef: RefObject<HTMLCanvasElement | null>,
-  onDartDetected: (tip: Point) => void,
+  onDartDetected: (tip: Point, seq: number) => void,
   onDebugState?: (info: DetectorDebug) => void,
   /** Anropas när tavlan blivit tömd på pilar igen (efter minst en detekterad pil). */
   onBoardCleared?: () => void,
@@ -60,9 +64,15 @@ export const useDartDetector = (
    * kommentaren vid `snapshots` nedan). Ska sättas in FÖRE den senast kastade
    * pilen i turordningen, inte sist.
    */
-  onHiddenDartRevealed?: (tip: Point) => void,
+  onHiddenDartRevealed?: (tip: Point, seq: number) => void,
   /** Anropas vid varje bekräftad, ren uttagning (ingen dold pil avslöjades). */
   onDartRemoved?: () => void,
+  /**
+   * Anropas när en ENSAM kvarvarande pil läses om vid uttagningen och hamnar i
+   * ett annat fält än det registrerade. `seq` är samma löpnummer som gavs i
+   * onDartDetected/onHiddenDartRevealed för den pilen.
+   */
+  onDartCorrected?: (seq: number, tip: Point) => void,
   /** Loggar utförligt till konsolen. Styrs av ?debug i URL:en. */
   debug = false,
 ) => {
@@ -74,6 +84,7 @@ export const useDartDetector = (
   const onBoardClearedRef = useRef(onBoardCleared);
   const onHiddenDartRevealedRef = useRef(onHiddenDartRevealed);
   const onDartRemovedRef = useRef(onDartRemoved);
+  const onDartCorrectedRef = useRef(onDartCorrected);
   const motionThresholdRef = useRef(motionThreshold);
   const debugRef = useRef(debug);
   useEffect(() => {
@@ -82,6 +93,7 @@ export const useDartDetector = (
     onBoardClearedRef.current = onBoardCleared;
     onHiddenDartRevealedRef.current = onHiddenDartRevealed;
     onDartRemovedRef.current = onDartRemoved;
+    onDartCorrectedRef.current = onDartCorrected;
     motionThresholdRef.current = motionThreshold;
     debugRef.current = debug;
   });
@@ -251,6 +263,13 @@ export const useDartDetector = (
     /** Blobbarea per registrerad pil, samma ordning som `rawTips`. */
     let dartAreas: number[] = [];
     /**
+     * Löpnummer per registrerad pil (samma ordning som `rawTips`), så att App
+     * kan hitta rätt kast i kastlistan när en pil rättas i efterhand - index i
+     * listan förskjuts när pilar glöms, löpnumret gör det inte.
+     */
+    let dartSeqs: number[] = [];
+    let nextDartSeq = 0;
+    /**
      * Pilar som avstämningen nyss glömt (uppmätt 2026-10-04: två pilar
      * smälte ihop till en blobb mot tom tavla, blobben parades med den ena
      * och den andra bokfördes som uttagen; vid nästa uttag "hittades" den
@@ -278,8 +297,53 @@ export const useDartDetector = (
       if (rawTips[index]) recentlyForgotten.push({ tip: rawTips[index], at: performance.now() });
       rawTips.splice(index, 1);
       dartAreas.splice(index, 1);
+      dartSeqs.splice(index, 1);
       detectedDartsRef.current.splice(index, 1);
     };
+
+    /** Mindre spärr för nya kast: två pilar kan sitta med spetsarna 5 mm isär. */
+    const NEW_THROW_SPACING_PX = 12;
+
+    /**
+     * Hål eller material? Andelen av blobbens EGNA pixlar som skiljer sig
+     * från den TOMMA tavlan.
+     *
+     * `absdiff` är symmetriskt: hålet efter en uttagen pil ser i diffen mot
+     * förra bilden exakt ut som pilen gjorde. Positionsspärren (30 px) löste
+     * det men gjorde samtidigt att två pilar med spetsarna närmare än 13 mm
+     * aldrig kunde skiljas åt - och så tätt sätter man dem ofta. Det här
+     * testet skiljer dem i stället på innehållet: i en RIKTIG pils blobb
+     * skiljer sig pixlarna från den tomma tavlan (pilen täcker den); i ett
+     * HÅLS blobb är det tavlan som syns igen, alltså samma som referensen.
+     * Testas bara på blobbens egna pixlar (masken), så en grannpil som
+     * ligger inom samma rektangel påverkar inte svaret.
+     */
+    const materialFraction = (f: TipFind): number => {
+      const empty = snapshots[0];
+      if (!empty || !f.mask) return 1;
+      const cols = rawGray.cols;
+      const x0 = Math.max(0, f.rect.x);
+      const y0 = Math.max(0, f.rect.y);
+      const x1 = Math.min(cols, f.rect.x + f.rect.width);
+      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
+      if (x1 <= x0 || y1 <= y0) return 1;
+      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
+      const mask = f.mask.data;
+      const cur = rawGray.data;
+      const ref = empty.data;
+      let n = 0;
+      let m = 0;
+      for (let y = y0; y < y1; y += step) {
+        const off = y * cols;
+        for (let x = x0; x < x1; x += step) {
+          if (!mask[off + x]) continue;
+          n++;
+          if (Math.abs(cur[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD) m++;
+        }
+      }
+      return n ? m / n : 1;
+    };
+    const MATERIAL_MIN_FRACTION = 0.5;
 
     let rafId = 0;
     let stopped = false;
@@ -536,6 +600,7 @@ const STARTUP_GRACE_MS = 2000;
             reference,
             contours.size(),
             cand.members.length,
+            threshMat,
           );
           if (found) {
             results.push(found);
@@ -569,6 +634,7 @@ const STARTUP_GRACE_MS = 2000;
       reference: any,
       nContours: number,
       nParts: number,
+      threshMat: any,
     ): TipFind | null => {
       let result: TipFind | null = null;
       {
@@ -664,7 +730,15 @@ const STARTUP_GRACE_MS = 2000;
           if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
             lastAnalysis = `spets på radie ${radiusMM | 0} mm, utanför tavlan (troligen arm eller bara vingen)`;
           } else {
-            result = { tip: tipRaw, how, rect: bb, area: bestArea, diag: lastDiag };
+            result = {
+              tip: tipRaw,
+              how,
+              rect: bb,
+              area: bestArea,
+              diag: lastDiag,
+              mask: threshMat,
+              confidence: axis?.confidence ?? 0,
+            };
           }
         }
       }
@@ -678,9 +752,9 @@ const STARTUP_GRACE_MS = 2000;
      * pils "hål" (som har samma form och plats som pilen hade) tolkas som en
      * ny eller avslöjad pil.
      */
-    const nearKnownDart = (tip: Point) =>
+    const nearKnownDart = (tip: Point, radiusPx = MIN_DART_SPACING_PX) =>
       detectedDartsRef.current.some(
-        (d) => Math.hypot(d.x - tip.x, d.y - tip.y) < MIN_DART_SPACING_PX,
+        (d) => Math.hypot(d.x - tip.x, d.y - tip.y) < radiusPx,
       );
 
     /**
@@ -702,25 +776,31 @@ const STARTUP_GRACE_MS = 2000;
 
       // Radiekollen ligger i evaluateCandidate, så att en kandidat utanför
       // tavlan hoppas över och nästa får prövas.
+      const material = materialFraction(found);
       if (tooSoon) {
         lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
         absorbBlobRegion();
-      } else if (nearKnownDart(tip)) {
-        lastAnalysis = `pil ignorerad (för nära en redan registrerad, samma pil eller dess hål?)`;
+      } else if (nearKnownDart(tip, NEW_THROW_SPACING_PX)) {
+        lastAnalysis = `pil ignorerad (inom ${NEW_THROW_SPACING_PX} px från en registrerad - samma pil)`;
+        absorbBlobRegion();
+      } else if (material < MATERIAL_MIN_FRACTION) {
+        lastAnalysis = `pil ignorerad (blobben matchar tom tavla till ${Math.round((1 - material) * 100)} % - hål efter uttagen pil, inte material)`;
         absorbBlobRegion();
       } else {
         lastRegisterTime = nowMs;
+        const seq = nextDartSeq++;
         detectedDartsRef.current.push(tip);
         rawTips.push(found.tip);
         dartAreas.push(found.area);
+        dartSeqs.push(seq);
         dartsThisVisit++;
         pushSnapshot();
         // Loggraden ska visa den VALDA kandidatens siffror. Förut stod där
         // sista utvärderade kandidaten, som i avstämningsläget ofta är en
         // redan registrerad pil - loggen pekade då på fel pil.
         lastDiag = found.diag;
-        lastAnalysis = `PIL registrerad (${found.how})`;
-        onDartDetectedRef.current(tip);
+        lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %)`;
+        onDartDetectedRef.current(tip, seq);
       }
     };
 
@@ -828,6 +908,38 @@ const STARTUP_GRACE_MS = 2000;
       frameArea: number,
     ): boolean => {
       if (verdict.kind === 'oförändrat') {
+        // Självrättning: står EN pil ensam kvar i tavlan syns hela dess
+        // silhuett för första gången - när den landade kan en grannpil ha
+        // skymt den eller smält ihop med den. Läs om den ur blobben mot tom
+        // tavla och, hamnar den i ett annat fält, rätta kastet (Kristians
+        // önskemål 2026-10-04: "den vet att den sista ska vara på 6 men ser
+        // att den sitter på 10"). Strikta villkor: en känd, en sedd, normal
+        // area, hög axelkonfidens och minst 8 px flytt - annars rör vi inget.
+        if (rawTips.length === 1 && seenDarts.length === 1 && dartAreas[0] > 0) {
+          const f = seenDarts[0];
+          const ratio = f.area / dartAreas[0];
+          const tip = warpPoint(f.tip);
+          const old = detectedDartsRef.current[0];
+          const moved = Math.hypot(tip.x - old.x, tip.y - old.y);
+          const oldScore = getScoreFromPixel(old.x, old.y);
+          const newScore = getScoreFromPixel(tip.x, tip.y);
+          if (
+            ratio > 0.6 &&
+            ratio < 1.6 &&
+            f.confidence >= 0.6 &&
+            moved >= 8 &&
+            oldScore.label !== newScore.label
+          ) {
+            detectedDartsRef.current[0] = tip;
+            rawTips[0] = f.tip;
+            dartAreas[0] = f.area;
+            lastDiag = f.diag;
+            lastAnalysis = `RÄTTAD: ensam pil omläst ${oldScore.label} → ${newScore.label} (${moved | 0} px, conf ${f.confidence.toFixed(2)})`;
+            syncSnapshots();
+            onDartCorrectedRef.current?.(dartSeqs[0], tip);
+            return true;
+          }
+        }
         // Alla kända pilar syns, inget nytt hittades. Absorbera INTE hela
         // bildrutan här: har en pil landat utan att kännas igen som pilform
         // skulle den sväljas in i referensen och bli permanent osynlig (det
@@ -882,16 +994,21 @@ const STARTUP_GRACE_MS = 2000;
       const outsideBoard =
         !!tip && Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) > BOARD_PX * 0.55;
       const forgotten = !!revealed && nearRecentlyForgotten(revealed.tip, performance.now());
-      if (tip && !nearKnownDart(tip) && !outsideBoard && !forgotten) {
+      // Hål eller pil avgörs på innehållet (materialFraction), inte på
+      // avståndet till kända pilar: två pilar sitter ofta tätare än 13 mm.
+      const isHole = !!revealed && materialFraction(revealed) < MATERIAL_MIN_FRACTION;
+      if (tip && !nearKnownDart(tip, NEW_THROW_SPACING_PX) && !outsideBoard && !forgotten && !isHole) {
+        const seq = nextDartSeq++;
         detectedDartsRef.current.push(tip);
         rawTips.push(revealed!.tip);
         dartAreas.push(revealed!.area);
+        dartSeqs.push(seq);
         dartsThisVisit++;
         syncSnapshots();
         lastDiag = revealed!.diag;
         lastAnalysis = `DOLD PIL avslöjad vid uttagning (avstämt, ${revealed!.how})`;
         for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
-        onHiddenDartRevealedRef.current?.(tip);
+        onHiddenDartRevealedRef.current?.(tip, seq);
         return true;
       }
 
@@ -902,7 +1019,9 @@ const STARTUP_GRACE_MS = 2000;
           ? 'utanför tavlan'
           : forgotten
             ? 'nyss glömd pil, inte dold'
-            : 'redan registrerad pil';
+            : isHole
+              ? 'hål efter uttagen pil, inte material'
+              : 'samma punkt som en registrerad pil';
       lastAnalysis = `${idx.length} pil(ar) uttagna (avstämt), rest ignorerad (${why})`;
       for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
       return true;
@@ -1028,17 +1147,20 @@ const STARTUP_GRACE_MS = 2000;
           !!tip && Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) > BOARD_PX * 0.55;
 
         const forgottenOld = !!found && nearRecentlyForgotten(found.tip, performance.now());
-        if (tip && !nearKnownDart(tip) && !outsideBoard && !forgottenOld) {
+        const isHoleOld = !!found && materialFraction(found) < MATERIAL_MIN_FRACTION;
+        if (tip && !nearKnownDart(tip, NEW_THROW_SPACING_PX) && !outsideBoard && !forgottenOld && !isHoleOld) {
           lastAnalysis = `DOLD PIL avslöjad vid uttagning (${found!.how})`;
           popSnapshot();
           pushSnapshot(); // nuvarande bild (den avslöjade pilen, ensam) blir nya toppen
           if (detectedDartsRef.current.length > 0) forgetDart(detectedDartsRef.current.length - 1);
+          const seq = nextDartSeq++;
           detectedDartsRef.current.push(tip);
           rawTips.push(found!.tip);
           dartAreas.push(found!.area);
+          dartSeqs.push(seq);
           dartsThisVisit++;
           lastDiag = found!.diag;
-          onHiddenDartRevealedRef.current?.(tip);
+          onHiddenDartRevealedRef.current?.(tip, seq);
         } else {
           // Osäkert. Säkraste antagandet är en ren uttagning - annars
           // riskerar vi att aldrig komma vidare mot tom tavla.
@@ -1049,7 +1171,9 @@ const STARTUP_GRACE_MS = 2000;
               ? 'utanför tavlan'
               : forgottenOld
                 ? 'nyss glömd pil, inte dold'
-                : 'redan registrerad pil';
+                : isHoleOld
+                  ? 'hål efter uttagen pil, inte material'
+                  : 'samma punkt som en registrerad pil';
           lastAnalysis = `pil uttagen, rest ignorerad (${dBase | 0} px, ${why})`;
           popSnapshot();
           forgetDart(detectedDartsRef.current.length - 1);
@@ -1203,6 +1327,7 @@ const STARTUP_GRACE_MS = 2000;
               detectedDartsRef.current = [];
               rawTips = [];
               dartAreas = [];
+              dartSeqs = [];
               recentlyForgotten = [];
               lastEmptyDiffPx = -1;
               resetSnapshots();

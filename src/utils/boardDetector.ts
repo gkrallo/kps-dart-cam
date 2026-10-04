@@ -9,6 +9,7 @@ import {
 } from './boardEllipse';
 import { CANONICAL_CALIBRATION_MM, computeCalibration } from './boardProjection';
 import { estimateSectorRotation, type ColourSampler, type RGB } from './sectorPhase';
+import { refineCalibrationOnRings } from './ringRefine';
 
 /**
  * Under den här konfidensen används inte färgmetodens rotation alls.
@@ -276,6 +277,85 @@ export function alignSectorsToBoard(
   }
 }
 
+export interface RingRefinement {
+  /** De fyra kalibreringspunkterna, finjusterade, i containerkoordinater. */
+  points: Point[];
+  /** Reprojektionsfel i px (rms / max) för kantparen. */
+  residualPx: number;
+  maxResidualPx: number;
+  /** Uppmätt ytterkant FÖRE, mm per kvadrant [topp, höger, botten, vänster]. */
+  beforeDoubleMM: number[];
+  /** Antal kantpar som användes. */
+  samples: number;
+}
+
+/**
+ * Finjusterar de fyra punkterna mot ringkanterna i den faktiska bilden - se
+ * ringRefine.ts. Uppmätt 2026-10-04: autokalibreringen lade bottenpunkten
+ * 3 mm för långt ut (ytterkanten lästes 167 mm nertill, 170 runt om); efter
+ * finjusteringen låg alla fyra kvadranter inom ±0,3 mm. Fungerar på vilken
+ * kalibrering som helst som redan ligger ungefär rätt (inom ±12 mm).
+ */
+export function refineCalibrationToRings(
+  cv: any,
+  videoElement: HTMLVideoElement,
+  points: Point[],
+  containerWidth: number,
+  containerHeight: number,
+): RingRefinement | null {
+  if (!cv || !videoElement || videoElement.videoWidth === 0) return null;
+  if (points.length !== 4) return null;
+
+  const vw = videoElement.videoWidth;
+  const vh = videoElement.videoHeight;
+  const mats: any[] = [];
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = vw;
+    canvas.height = vh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(videoElement, 0, 0, vw, vh);
+    const src = cv.imread(canvas);
+    mats.push(src);
+    const rgb = new cv.Mat();
+    mats.push(rgb);
+    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+
+    const calib = computeCalibration([...CANONICAL_CALIBRATION_MM], points, { refine: false });
+    if (!calib) return null;
+
+    const scale = Math.max(containerWidth / vw, containerHeight / vh);
+    const offsetX = (containerWidth - vw * scale) / 2;
+    const offsetY = (containerHeight - vh * scale) / 2;
+    const videoSampler = matSampler(rgb, vw, vh);
+    const sample: ColourSampler = (x, y) =>
+      videoSampler((x - offsetX) / scale, (y - offsetY) / scale);
+
+    const res = refineCalibrationOnRings(calib, sample);
+    if (!res) return null;
+    const [top, right, bottom, left] = cardinalCalibrationPoints(res.calib);
+    return {
+      points: [top, right, bottom, left],
+      residualPx: res.residualPx / scale,
+      maxResidualPx: res.maxResidualPx / scale,
+      beforeDoubleMM: res.before.double,
+      samples: res.samples,
+    };
+  } catch (err) {
+    console.error('refineCalibrationToRings misslyckades:', err);
+    return null;
+  } finally {
+    for (const m of mats) {
+      try {
+        m.delete();
+      } catch {
+        /* redan raderad */
+      }
+    }
+  }
+}
+
 /**
  * Ellipsbaserad autodetektering.
  *
@@ -421,7 +501,12 @@ export function autoDetectBoardEllipse(
       rotation && rotation.confidence >= MIN_SECTOR_CONFIDENCE
         ? rotateCalibration(upright, rotation.offsetRad)
         : upright;
-    const [top, right, bottom, left] = cardinalCalibrationPoints(oriented);
+    // Sista steget: finjustera mot ringkanterna i bilden. Ellipsmetoden
+    // lämnade bottenpunkten 3 mm fel på Kristians tavla (2026-10-04) utan att
+    // det syntes på wireframets form; kantpassningen tar bort det.
+    const refined = refineCalibrationOnRings(oriented, matSampler(rgb, vw, vh));
+    const final = refined ? refined.calib : oriented;
+    const [top, right, bottom, left] = cardinalCalibrationPoints(final);
 
     // Videon visas med object-cover: skalad med max() och centrerad.
     const scale = Math.max(containerWidth / vw, containerHeight / vh);
@@ -433,7 +518,7 @@ export function autoDetectBoardEllipse(
     });
 
     const pts = [toContainer(top), toContainer(right), toContainer(bottom), toContainer(left)];
-    const bull = oriented.project(0, 0);
+    const bull = final.project(0, 0);
     return validateDartboardPoints(pts, toContainer(bull)) ? pts : null;
   } catch (err) {
     console.error('autoDetectBoardEllipse misslyckades:', err);

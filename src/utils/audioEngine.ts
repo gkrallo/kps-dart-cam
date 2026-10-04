@@ -170,20 +170,25 @@ class AudioEngine {
    * Speaks out the dart hit score using Swedish Text-to-Speech. Köar - se
    * `speak()`.
    */
+  /** Talad form av en pilsetikett från dartMath (DB, 25, MISS, T20, D5, S7). */
+  public scoreText(label: string, totalPoints: number): string {
+    // Samma ord som pilraden och Turer använder (segments.label): i Farfar
+    // är "röd bull" det som betyder något, och "Missa!" var inte svenska.
+    if (label === 'DB') return 'Röd bull!';
+    if (label === '25') return 'Grön bull';
+    if (label === 'MISS') return 'Miss';
+    if (label.startsWith('T')) return `Trippel ${label.slice(1)}`;
+    if (label.startsWith('D')) return `Dubbel ${label.slice(1)}`;
+    return `${totalPoints}`;
+  }
+
   public speakScore(label: string, totalPoints: number, opts: { cancel?: boolean } = {}) {
     if (!this.synth) return;
 
     try {
       if (opts.cancel) this.synth.cancel();
 
-      // Samma ord som pilraden och Turer använder (segments.label): i Farfar
-      // är "röd bull" det som betyder något, och "Missa!" var inte svenska.
-      let text = `${totalPoints}`;
-      if (label === 'DB') text = 'Röd bull!';
-      else if (label === '25') text = 'Grön bull';
-      else if (label === 'MISS') text = 'Miss';
-      else if (label.startsWith('T')) text = `Trippel ${label.slice(1)}`;
-      else if (label.startsWith('D')) text = `Dubbel ${label.slice(1)}`;
+      const text = this.scoreText(label, totalPoints);
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'sv-SE';

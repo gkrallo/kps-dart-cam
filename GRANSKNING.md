@@ -445,3 +445,42 @@ odatacertifierad: adb tappade kontakten två gånger och telefonen laddade ur.
 - Bildtakten var 10–13 fps med `?mask`, mot 60 i september. Mät utan mask.
 - En halvt skymd pil vid trippeltråden lästes 4 mm fel (111 mm mot T13:s
   99–107). Partiella silhuetter ska inte avgöra en ring.
+
+---
+
+## 9. Byggt efter sessionen 2026-10-04 (kvällen), otestat på hårdvara
+
+Kristians tre invändningar efter kastningen, och vad som gjordes:
+
+**"15 mm mellan spetsarna kommer inte att fungera, man sätter ofta tätt."**
+Rätt. Spärren fanns för att hålet efter en uttagen pil ser ut som pilen i
+diffen mot förra bilden. Nu avgörs hål/pil på innehållet i stället:
+`materialFraction` mäter hur stor del av blobbens egna pixlar som skiljer sig
+från den TOMMA tavlan (en pil täcker tavlan, ett hål visar den igen).
+Positionsspärren för nya kast sänkt till 12 px (~5 mm), avstämningens
+hopparning till 25 px (~10 mm). Samma test skyddar dold-pil-grenarna.
+
+**"Kan den rätta sig själv när pilarna dras ut?"** Ja, i det fall som går
+att göra säkert: när EN pil står ensam kvar syns hela silhuetten för första
+gången. Läses den då i ett annat fält än det registrerade (area normal,
+axelkonfidens ≥ 0,6, flytt ≥ 8 px) rättas kastet via nya `onDartCorrected`
+och sägs högt: "Rättar: 6 blir 10". Detektorn ger varje pil ett löpnummer
+så App hittar rätt kast i kastlistan även efter insättningar. Kravet för att
+det ska hända är att pilarna dras ut **en i taget med armen ur bild** så
+att en analys hinner köras mellan uttagen; rycker man alla tre töms tavlan
+bara (vilket också är rätt). Två sekunder räcker; det är stillhetskravet på
+500 ms plus att armen ska vara borta.
+
+**"Den blå ringen går lite för långt ner."** Mätt mot kvällens sista
+bildruta med `scripts/measure-rings.ts`: dubbelringens färgkant låg på
+170,0 mm uppe, till höger och till vänster, **167,0 nertill**. Ny
+`ringRefine.ts` letar färgkanten längs 360 strålar för dubbel- och
+trippelringen och löser homografin överbestämt (LM). På samma bild efter:
+alla fyra kvadranter inom ±0,3 mm av färgkanten. Körs sist i Auto och via
+knappen "Finjustera", som säger hur fel det låg. Syntetiskt test i
+`ringRefine.test.ts`. Lärdom från det: färgen slutar ~0,6 mm innanför den
+nominella radien eftersom tråden täcker gränsen; siktar man på 170 och 107
+rakt av får ringarna olika relativa fel och passningen kompromissar.
+
+Allt detta är verifierat med tester och mot den verkliga bildrutan, men
+inte med en enda pil i tavlan. Testordningen står i `TESTPLAN.md`:s banner.

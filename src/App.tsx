@@ -74,6 +74,12 @@ export default function App() {
    * i båda fallen är `currentDarts` tom när tavlan töms.
    */
   const dartsSinceClearRef = useRef(0);
+  /**
+   * Detektorns löpnummer per pil -> index i kastlistan. Behövs för att en
+   * pil som läses om vid uttagningen (onDartCorrected) ska rätta RÄTT kast.
+   * Nollställs när tavlan töms.
+   */
+  const visitActionsRef = useRef(new Map<number, number>());
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
@@ -144,10 +150,14 @@ export default function App() {
     setCalibrationPoints(points);
   }, []);
 
-  const handleDartDetected = useCallback((pt: Point) => {
+  const handleDartDetected = useCallback((pt: Point, seq: number) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const res = throwSeg(segFromDartScore(scoreObj));
     dartsSinceClearRef.current += 1;
+    if (res?.accepted) {
+      const last = res.state.log[res.state.log.length - 1];
+      if (last) visitActionsRef.current.set(seq, last.ai);
+    }
 
     // Motorn tog inte emot kastet: turen är redan tjock, full eller matchen
     // avgjord. Förut spelades pil-ljud och poängen lästes upp ändå, så
@@ -204,6 +214,7 @@ export default function App() {
   const handleBoardCleared = useCallback(() => {
     const readThisVisit = dartsSinceClearRef.current;
     dartsSinceClearRef.current = 0;
+    visitActionsRef.current.clear();
     setAwaitingRetrieval(false);
     setShowManualNext(false);
 
@@ -288,7 +299,7 @@ export default function App() {
   // detektorn ska kunna säga till, och för framtida UI.
   const handleDartRemoved = useCallback(() => {}, []);
 
-  const handleHiddenDartRevealed = useCallback((pt: Point) => {
+  const handleHiddenDartRevealed = useCallback((pt: Point, seq: number) => {
     // Är matchen avgjord tar motorn ändå inte emot kastet (canThrow → false),
     // och då blir det bara en död post i listan plus ett förvirrande
     // "dold pil hittades" efter att någon redan vunnit.
@@ -296,11 +307,19 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const seg = segFromDartScore(scoreObj);
 
-    // Sist i turen - se insertIndexForRevealedThrow för varför det är den
-    // bästa gissningen när ordningen inte går att härleda.
     // Ställningen med: i Farfar är turen redan stängd när en pil saknas, och
     // då måste pilen in före den som stängde turen - inte hos nästa spelare.
-    insertMissingThrow(insertIndexForRevealedThrow(match.actions, matchState(match)), seg);
+    const at = insertIndexForRevealedThrow(match.actions, matchState(match));
+    const accepted = insertMissingThrow(at, seg);
+    if (!accepted) {
+      // Turen var redan full (301/501): pilen kom inte in. Säg det, i stället
+      // för att läsa upp ett kast som inte finns.
+      audioEngine.speak('En pil till hittades, men turen är redan full.');
+      return;
+    }
+    // Kastindexen efter insättningspunkten har förskjutits ett steg.
+    for (const [s, ai] of visitActionsRef.current) if (ai >= at) visitActionsRef.current.set(s, ai + 1);
+    visitActionsRef.current.set(seq, at);
 
     audioEngine.playDartHitSound();
     audioEngine.speak('Dold pil hittades:');
@@ -308,6 +327,30 @@ export default function App() {
     setLastScoredDartLabel(`Dold: ${scoreObj.label}`);
     window.setTimeout(() => setLastScoredDartLabel(null), 3000);
   }, [match, insertMissingThrow]);
+
+  /**
+   * En ensam kvarvarande pil lästes om vid uttagningen och hamnade i ett
+   * annat fält än det registrerade (se actOnCensus i useDartDetector). Rätta
+   * kastet och säg det högt - spelaren står vid linjen.
+   */
+  const handleDartCorrected = useCallback((seq: number, pt: Point) => {
+    if (!match) return;
+    const ai = visitActionsRef.current.get(seq);
+    if (ai === undefined) return;
+    const st = matchState(match);
+    const entry = st.log.find((l) => l.ai === ai);
+    if (!entry) return;
+    const scoreObj = getScoreFromPixel(pt.x, pt.y);
+    const seg = segFromDartScore(scoreObj);
+    if (entry.dart.v === seg.v && entry.dart.m === seg.m) return;
+    editThrow(ai, seg);
+    const oldLabel = entry.dart.v === 0 ? 'MISS' : entry.dart.v === 25 ? (entry.dart.m === 2 ? 'DB' : '25') : `${entry.dart.m === 3 ? 'T' : entry.dart.m === 2 ? 'D' : 'S'}${entry.dart.v}`;
+    audioEngine.speak(
+      `Rättar: ${audioEngine.scoreText(oldLabel, entry.dart.v * entry.dart.m)} blir ${audioEngine.scoreText(scoreObj.label, scoreObj.totalPoints)}.`,
+    );
+    setLastScoredDartLabel(`Rättad: ${scoreObj.label}`);
+    window.setTimeout(() => setLastScoredDartLabel(null), 3000);
+  }, [match, editThrow]);
 
   const handleDebugState = useCallback((info: DetectorDebug) => {
     setDetectorState(info.state);
@@ -329,6 +372,7 @@ export default function App() {
     handleBoardCleared,
     handleHiddenDartRevealed,
     handleDartRemoved,
+    handleDartCorrected,
     debugMode,
   );
 

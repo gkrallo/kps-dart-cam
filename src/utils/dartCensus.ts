@@ -47,13 +47,14 @@ export interface DartCensusResult {
 /**
  * Standardavstånd för att para ihop en blobb med en känd pil.
  *
- * Satt till 40 px (~17 mm vid 2,4 px/mm), alltså något mer än
- * `MIN_DART_SPACING_PX` (30). Skälet: samma pil kan mätas några pixlar isär
- * mellan två analyser (den svänger in sig, ljuset ändras, masken växer eller
- * krymper), och en hopparning som missas blir BÅDE en falsk uttagning och ett
- * falskt nytt kast - det dyraste felet den här funktionen kan göra.
+ * Var 40 px (~17 mm). Uppmätt 2026-10-04: samma pil mäts 1-3 px isär mellan
+ * analyser, 9 px när blobben smält ihop med en granne. Samtidigt sätter man
+ * ofta pilarna tätt - 10 mm mellan spetsarna är vanligt - och med 40 px
+ * parades en ny pil ihop med grannen och blev aldrig registrerad. 25 px
+ * (~10 mm) har marginal åt båda hållen. En hopparning som missas blir BÅDE en
+ * falsk uttagning och ett falskt nytt kast, så gå inte lägre utan mätning.
  */
-export const DEFAULT_MATCH_PX = 40;
+export const DEFAULT_MATCH_PX = 25;
 
 export function reconcileDarts({
   known,

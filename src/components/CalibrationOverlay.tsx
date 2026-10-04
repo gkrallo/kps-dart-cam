@@ -5,7 +5,7 @@ import {
   generateProjectedCircleSVG,
   getSectorBoundaryAngles,
 } from '../utils/boardProjection';
-import { alignSectorsToBoard, autoDetectBoardEllipse, autoDetectBoardOpenCV } from '../utils/boardDetector';
+import { alignSectorsToBoard, autoDetectBoardEllipse, autoDetectBoardOpenCV, refineCalibrationToRings } from '../utils/boardDetector';
 import {
   fromStored,
   loadCalibration,
@@ -203,6 +203,37 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
         : `Sektorerna vred ${Math.abs(d).toFixed(1)}° ${d > 0 ? 'medurs' : 'moturs'}.`,
     );
     window.setTimeout(() => setDetectStatus(null), 5000);
+  };
+
+  /**
+   * "Finjustera": passa de fyra punkterna mot ringkanterna i bilden. Det är
+   * kontrollen Kristian gjorde med ögat 2026-10-04 ("den blå ringen går lite
+   * för långt ner") - mätt var det 3 mm. Fungerar på handdragna punkter lika
+   * väl som på autodetekterade, bara de ligger inom ~12 mm från rätt.
+   */
+  const handleRefine = () => {
+    if (!videoElement || !cv || points.length !== 4) return;
+    const res = refineCalibrationToRings(cv, videoElement, points, containerWidth, containerHeight);
+    if (!res) {
+      setDetectStatus('Hittade inte ringkanterna. Lägg punkterna ungefär rätt först, och se till att tavlan är tom och belyst.');
+      window.setTimeout(() => setDetectStatus(null), 6000);
+      return;
+    }
+    setPoints(res.points);
+    onPointsChange(res.points);
+    const mm = (px: number) => (px * 0.425).toFixed(1); // containerpx ≈ warpad skala är inte känd här; residualen rapporteras i px
+    const worst = res.beforeDoubleMM
+      .map((v, i) => ({ v, i }))
+      .filter((q) => Number.isFinite(q.v))
+      .sort((a, b) => Math.abs(b.v - 170) - Math.abs(a.v - 170))[0];
+    const names = ['uppe', 'till höger', 'nertill', 'till vänster'];
+    setDetectStatus(
+      worst && Math.abs(worst.v - 170) >= 0.8
+        ? `Ringen låg ${Math.abs(worst.v - 170).toFixed(1)} mm fel ${names[worst.i]} - rättat. Passning ${res.residualPx.toFixed(1)} px (${res.samples} kantpunkter).`
+        : `Kalibreringen satt redan rätt (inom 0,8 mm). Passning ${res.residualPx.toFixed(1)} px.`,
+    );
+    void mm;
+    window.setTimeout(() => setDetectStatus(null), 7000);
   };
 
   const handlePointerDown = (idx: number, e: React.PointerEvent) => {
@@ -719,6 +750,15 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           >
             <Crosshair className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">{anchorMode ? 'Tryck på 20:an…' : 'Peka ut 20:an'}</span>
+          </button>
+
+          <button
+            onClick={handleRefine}
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-300 active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border border-slate-700/80 shadow-lg backdrop-blur-md transition-all"
+            title="Passar punkterna mot ringkanterna i bilden och visar hur bra passningen är"
+          >
+            <Focus className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">Finjustera</span>
           </button>
 
           <button
