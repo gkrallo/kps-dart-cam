@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+/* Appen är en enda skärm: ingen sida får någonsin bli högre än fönstret och
+   rulla. Se kommentaren vid App-roten (fixed inset-0) om 100dvh på Android. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 @keyframes laserScan {
   0% {
     top: 2%;

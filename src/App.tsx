@@ -475,8 +475,13 @@ export default function App() {
   };
 
 
+  // fixed inset-0, inte h-[100dvh]: på Android 15 i Chrome (edge-to-edge)
+  // räknar 100dvh ytan bakom gestfältet (754 px) medan det synliga fönstret
+  // är 697 px. Sidan blev 56 px för hög, kunde rullas, och kalibreringens
+  // övre knapprad hamnade ovanför skärmkanten (uppmätt 2026-10-04). En
+  // fixed-rot är alltid exakt det synliga fönstret och kan inte rulla.
   return (
-    <div className="relative flex flex-col h-[100dvh] w-full bg-slate-950 text-slate-50 overflow-hidden font-sans">
+    <div className="fixed inset-0 flex flex-col bg-slate-950 text-slate-50 overflow-hidden font-sans">
       {/* Header. Titeln visas bara efter kalibrering: under kalibreringen ligger
           CalibrationOverlays eget knapprad (Auto-Kalibrera m.fl.) i exakt samma
           hörn (top-3 left-3) och låg i samma z-lager som headern - texten och
