@@ -345,6 +345,47 @@ export const useDartDetector = (
     };
     const MATERIAL_MIN_FRACTION = 0.5;
 
+    /**
+     * Fanns det redan material här FÖRE förändringen? Andelen av blobbens egna
+     * pixlar där förra bilden (toppen av stacken) skilde sig från den TOMMA
+     * tavlan.
+     *
+     * Uppmätt 2026-10-04: när pil 3 slog i tavlan vibrerade den, pilen i 1:an
+     * flyttade sig någon pixel, och diffen mot förra bilden visade en smal
+     * remsa längs den pilens kropp. Remsan klarade formtesten, "spetsen"
+     * hamnade vid vingen i sektor 18, och en 18:a bokfördes - den riktiga D3
+     * kom sedan in i en full tur och räknades inte. En remsa av en pil som
+     * rört sig ligger där det redan FANNS en pil; en ny pil landar där tavlan
+     * var tom. Det är skillnaden.
+     */
+    const priorMaterialFraction = (f: TipFind): number => {
+      const empty = snapshots[0];
+      const top = snapshots[snapshots.length - 1];
+      if (!empty || !top || top === empty || !f.mask) return 0;
+      const cols = rawGray.cols;
+      const x0 = Math.max(0, f.rect.x);
+      const y0 = Math.max(0, f.rect.y);
+      const x1 = Math.min(cols, f.rect.x + f.rect.width);
+      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
+      if (x1 <= x0 || y1 <= y0) return 0;
+      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
+      const mask = f.mask.data;
+      const before = top.data;
+      const ref = empty.data;
+      let n = 0;
+      let m = 0;
+      for (let y = y0; y < y1; y += step) {
+        const off = y * cols;
+        for (let x = x0; x < x1; x += step) {
+          if (!mask[off + x]) continue;
+          n++;
+          if (Math.abs(before[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD) m++;
+        }
+      }
+      return n ? m / n : 0;
+    };
+    const PRIOR_MATERIAL_MAX_FRACTION = 0.5;
+
     let rafId = 0;
     let stopped = false;
     let isStabilizing = false;
@@ -777,6 +818,7 @@ const STARTUP_GRACE_MS = 2000;
       // Radiekollen ligger i evaluateCandidate, så att en kandidat utanför
       // tavlan hoppas över och nästa får prövas.
       const material = materialFraction(found);
+      const prior = priorMaterialFraction(found);
       if (tooSoon) {
         lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
         absorbBlobRegion();
@@ -785,6 +827,9 @@ const STARTUP_GRACE_MS = 2000;
         absorbBlobRegion();
       } else if (material < MATERIAL_MIN_FRACTION) {
         lastAnalysis = `pil ignorerad (blobben matchar tom tavla till ${Math.round((1 - material) * 100)} % - hål efter uttagen pil, inte material)`;
+        absorbBlobRegion();
+      } else if (prior > PRIOR_MATERIAL_MAX_FRACTION) {
+        lastAnalysis = `pil ignorerad (${Math.round(prior * 100)} % av blobben låg där en pil redan satt - en registrerad pil har rört sig, inget nytt kast)`;
         absorbBlobRegion();
       } else {
         lastRegisterTime = nowMs;
@@ -799,7 +844,7 @@ const STARTUP_GRACE_MS = 2000;
         // sista utvärderade kandidaten, som i avstämningsläget ofta är en
         // redan registrerad pil - loggen pekade då på fel pil.
         lastDiag = found.diag;
-        lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %)`;
+        lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %, fanns före ${Math.round(prior * 100)} %)`;
         onDartDetectedRef.current(tip, seq);
       }
     };
