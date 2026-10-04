@@ -385,6 +385,7 @@ export const useDartDetector = (
       return n ? m / n : 0;
     };
     const PRIOR_MATERIAL_MAX_FRACTION = 0.5;
+    const PRIOR_MATERIAL_MAX_COMPACT = 0.25;
 
     let rafId = 0;
     let stopped = false;
@@ -855,7 +856,10 @@ const STARTUP_GRACE_MS = 2000;
       } else if (material < MATERIAL_MIN_FRACTION) {
         lastAnalysis = `pil ignorerad (blobben matchar tom tavla till ${Math.round((1 - material) * 100)} % - hål efter uttagen pil, inte material)`;
         absorbBlobRegion();
-      } else if (prior > PRIOR_MATERIAL_MAX_FRACTION) {
+      } else if (prior > (found.confidence > 0 ? PRIOR_MATERIAL_MAX_FRACTION : PRIOR_MATERIAL_MAX_COMPACT)) {
+        // Kompakta blobbar (tyngdpunktsgrenen, ingen axel) är de farliga:
+        // en vinge på en pil som rört sig ser ut så (uppmätt 2026-10-04: 47 %
+        // gammalt material, registrerad som MISS på 175 mm). Strängare krav.
         lastAnalysis = `pil ignorerad (${Math.round(prior * 100)} % av blobben låg där en pil redan satt - en registrerad pil har rört sig, inget nytt kast)`;
         absorbBlobRegion();
       } else {
@@ -1337,6 +1341,12 @@ const STARTUP_GRACE_MS = 2000;
         lastMotionTime = now;
         isStabilizing = true;
         state = 'MOTION';
+        // Rörelse nollställer tålamodet för främmande föremål: ett ljusskifte
+        // rör sig inte, en människa som plockar pilar gör det hela tiden.
+        // Uppmätt 2026-10-04: med fast 8 s tålamod analyserades en bild med
+        // armen i (70 000 px) så fort spelaren stått vid tavlan längre än så,
+        // och en skräpblobb registrerades.
+        hugeSince = 0;
       } else if (baselineNoise > 500) {
         if (!isStabilizing) {
           isStabilizing = true;

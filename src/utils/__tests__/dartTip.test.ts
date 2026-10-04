@@ -261,7 +261,7 @@ describe('trimShadowAtTip - skuggan vid spetsen', () => {
   });
 
   it('trimmar aldrig mer än taket', () => {
-    const r = trimShadowAtTip(tip, axis, () => ({ cur: 180, ref: 200 }), { maxPx: 20 });
-    expect(r.trimmedPx).toBe(20);
+    const r = trimShadowAtTip(tip, axis, () => ({ cur: 180, ref: 200 }));
+    expect(r.trimmedPx).toBe(16);
   });
 });

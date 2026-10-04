@@ -327,7 +327,11 @@ export function trimShadowAtTip(
   sample: (x: number, y: number) => GreyPair | null,
   opts: ShadowTrimOptions = {},
 ): ShadowTrimResult {
-  const maxPx = opts.maxPx ?? 20;
+  // 16 px: skuggan mätte 12-15 px. Stålspetsen över gräddvitt fält ser ut som
+  // skugga för testet (måttligt mörkare), så trimningen fortsätter in i den;
+  // taket begränsar övertrimningen till ~1 mm. Uppmätt 2026-10-04: taket 20
+  // nåddes i tre av fem registreringar.
+  const maxPx = opts.maxPx ?? 16;
   const minDarker = opts.minDarker ?? 6;
   const maxDarker = opts.maxDarker ?? 45;
   const n = Math.hypot(axisTowardTip.x, axisTowardTip.y) || 1;
