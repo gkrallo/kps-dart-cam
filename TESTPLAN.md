@@ -1,5 +1,17 @@
 # Testplan vid tavlan
 
+> **Körd 2026-10-04 (första sessionen med Winmau Blade X inomhus).** Del A–D
+> godkända: 12 av 12 kastade pilar rätt, bull på millimetern (DB 1 mm, grön 25
+> vid 19/3-tråden 0,5 mm från tråden), snabba kast (3 på 2,3 s) alla rätt,
+> uttagning en-i-taget ren. Två fel hittades och rättades under kvällen
+> (commits `f61d660`, `cbcf5a4`): sammansmälta blobbar i avstämningen mot tom
+> tavla, och analyser som kördes medan en arm stod stilla i bild - det senare
+> var roten till alla spökkast. **Kvar att verifiera på nästa session:** de två
+> rättningarna under en hel match, dold pil med spetsar > 3 cm isär (försöket
+> hade 10 mm och gav korrekt "bara 1 av 3 pilar avlästa" i stället), och varför
+> tömd-signalen uteblev en gång i tur 1 (nu loggas `emptyPx`). Resultat per
+> steg i `GRANSKNING.md` avsnitt 8.
+
 Skriven 2026-09-18 efter granskningen (`GRANSKNING.md`), som ersättning för
 planen från 2026-09-12. Sedan senaste hårdvarusessionen (2026-09-12) har
 **allt nedan byggts utan att ett enda kast setts**. Planen är ordnad så att

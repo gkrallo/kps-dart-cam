@@ -393,3 +393,55 @@ scoliadarts.com/faq, stlabs.is/project3, patent US10962336B2, arXiv 2604.01130.
 5. **Finjustera kalibrering** på ringkanter + residual i UI (K1, K2).
 6. **Spelläge** för 2,4 m (U1, U2).
 7. Detektorns D1–D3 och S1/S3, var för sig, med mätning före och efter.
+
+---
+
+## 8. Mätt vid tavlan 2026-10-04
+
+Ny uppställning: Winmau Blade X med surround inomhus, kamera nästan rakt
+framifrån, zoom 2,15×, tavlan 781–812 px bred (2,3–2,4 px/mm). Allt styrt
+från datorn över adb/CDP; ingen rörde telefonen under spel. Sladden var
+odatacertifierad: adb tappade kontakten två gånger och telefonen laddade ur.
+
+**Godkänt**
+
+| Test | Resultat |
+|---|---|
+| Autokalibrering (ellips + sektorfas) | Satt på första klicket, sektorlinjer på trådarna, två gånger |
+| Kastade pilar, yttre fält | 12 av 12 rätt: S10, S7, 25, S17, S7, S5 (nära 20/5-tråden), S8@29 mm, S13, S7@28 mm, 16, 25, 5 |
+| Axelkonfidens på riktiga kast | 0,62–0,76 (gränsen 0,33) |
+| Handplacerad röd bull, ~1 mm vänster-nedåt | **DB@1mm/197°** |
+| Handplacerad grön 25 vid 19/3-tråden (tråd 189°) | **25@14mm/187°** |
+| Snabba kast, 3 på 2,3 s (1,3 och 1,0 s mellanrum) | Alla tre rätt, i ordning |
+| Skuggtest | Förkastade riktiga skuggor 6 gånger (r 0,80–0,98), aldrig en pil |
+| Uttagning en-i-taget med paus | Rena avstämningar varje gång, tömd → spelarbyte, rätt uppläsning |
+| R1 (drift-uppdateringen) | Betedde sig rätt med pil i tavlan |
+| R9 (insättning utan effekt rullas tillbaka) | Räddade matchen från två spökkast |
+| Reservvägen för oläst dold pil | "Bara 1 av 3 pilar avlästa" med banner, som avsett |
+
+**Fel som hittades och rättades under kvällen**
+
+1. **Sammansmälta blobbar mot tom tavla** (D2, bekräftad): två pilar som nuddar
+   varandra blir en blobb på 13 700 px (en pil: 7 500). Som nytt kast blev
+   spetsen rätt av tur; vid uttagning parades blobben med en pil och den andra
+   bokfördes som uttagen, varpå den "hittades" igen som dold pil. Rättat i
+   `f61d660`: spets ur diffen mot förra bilden, storleksspärr 1,5× i
+   avstämningen, nyss glömda pilar får inte bli dolda.
+2. **Analys medan en arm står stilla i bild** - roten till alla spökkast. En
+   pil ger 7 000–14 000 skilda pixlar, armen 47 000–137 000. Avstämningen
+   såg den skymda pilen som uttagen och en del av armen som dold pil; ett
+   spökkast på 6 bokfördes. Rättat i `cbcf5a4` med bildnivåspärren
+   `HAND_PX`; verifierad direkt efteråt (fem väntande analyser, sedan en ren
+   registrering).
+
+**Kvar**
+
+- Dold pil med spetsar > 3 cm isär (försöket hade 10 mm; under
+  `MIN_DART_SPACING_PX` är det per definition samma pil).
+- Tömd-signalen uteblev en gång i tur 1 (tavlan var tom i 2 minuter). Orsaken
+  är inte fastställd; `emptyPx` loggas nu i heartbeaten.
+- D1 (snabba kast) står kvar som risk: marginalen till 1-sekundsspärren var
+  0,0–0,3 s.
+- Bildtakten var 10–13 fps med `?mask`, mot 60 i september. Mät utan mask.
+- En halvt skymd pil vid trippeltråden lästes 4 mm fel (111 mm mot T13:s
+  99–107). Partiella silhuetter ska inte avgöra en ring.
