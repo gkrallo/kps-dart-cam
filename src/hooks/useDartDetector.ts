@@ -1,7 +1,7 @@
 import { RefObject, useEffect, useRef } from 'react';
 import { Point } from '../types';
 import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../utils/dartMath';
-import { chooseDartTip, detectDartAxisTip } from '../utils/dartTip';
+import { chooseDartTip, detectDartAxisTip, trimShadowAtTip } from '../utils/dartTip';
 import { classifyShadow, type BlobSample } from '../utils/shadowTest';
 import { boundingRect, groupFragments, minAreaRect } from '../utils/blobGroups';
 import {
@@ -715,6 +715,33 @@ const STARTUP_GRACE_MS = 2000;
           });
           tipRaw = choice.tip;
           how = choice.how;
+
+          // Skuggan vid spetsen: med ringlampa faller pilens skugga inåt och
+          // förlänger masken 10-15 px bortom stålspetsen (uppmätt 2026-10-04:
+          // T15 lästes som S15 på 98,5 mm; trimmad 104-105 mm). Gå bakåt
+          // längs axeln förbi det som inte är pilmaterial. Bara när axeln
+          // valdes - tyngdpunkten har ingen riktning att gå i.
+          if (tipRaw && axis && choice.how.startsWith('axel')) {
+            const px = -axis.axis.y;
+            const py = axis.axis.x;
+            const sampleGrey = (x: number, y: number) => {
+              let c = 0;
+              let r = 0;
+              for (const k of [-1, 0, 1]) {
+                const xi = Math.round(x + px * k);
+                const yi = Math.round(y + py * k);
+                if (xi < 0 || yi < 0 || xi >= rawGray.cols || yi >= rawGray.rows) return null;
+                c += rawGray.ucharPtr(yi, xi)[0];
+                r += reference.ucharPtr(yi, xi)[0];
+              }
+              return { cur: c / 3, ref: r / 3 };
+            };
+            const trimmed = trimShadowAtTip(tipRaw, axis.axis, sampleGrey);
+            if (trimmed.trimmedPx > 0) {
+              tipRaw = trimmed.tip;
+              how = `${how}, skugga trimmad ${trimmed.trimmedPx} px`;
+            }
+          }
         } catch (err) {
           console.error('Spetsdetektering misslyckades:', err);
           how = 'krasch i spetsdetektering';

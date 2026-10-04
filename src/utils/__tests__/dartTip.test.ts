@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectDartAxisTip } from '../dartTip';
+import { trimShadowAtTip, detectDartAxisTip } from '../dartTip';
 import {
   mulberry32,
   projectDartSilhouette,
@@ -219,5 +219,49 @@ describe('råbild vs warpad bild', () => {
     expect(rawFail).toBeLessThan(warpedFail * 0.75);
     expect(rawWorstMM).toBeLessThan(3);
     expect(rawFail / cases).toBeLessThan(0.2);
+  });
+});
+
+describe('trimShadowAtTip - skuggan vid spetsen', () => {
+  // Profil längs axeln (s = 0 är maskens ände, negativt = in i pilen), hämtad
+  // ur det verkliga bildparet 2026-10-04: skugga 13-34 mörkare i 12 px, sedan
+  // en nästan neutral stålspets, sedan en pilkropp 100+ ljusare än tavlan.
+  const profile: Record<number, { cur: number; ref: number }> = {
+    0: { cur: 189, ref: 189 },
+    [-1]: { cur: 167, ref: 174 },
+    [-2]: { cur: 146, ref: 172 },
+    [-3]: { cur: 138, ref: 172 },
+    [-4]: { cur: 155, ref: 172 },
+    [-5]: { cur: 166, ref: 179 },
+    [-6]: { cur: 176, ref: 196 },
+    [-7]: { cur: 189, ref: 206 },
+    [-8]: { cur: 190, ref: 172 },
+    [-9]: { cur: 208, ref: 181 },
+    [-10]: { cur: 223, ref: 191 },
+    [-11]: { cur: 225, ref: 126 },
+  };
+  const axis = { x: 1, y: 0 }; // spetsen pekar åt höger; bakåt är -x
+  const tip = { x: 100, y: 50 };
+  const sample = (x: number, _y: number) => profile[Math.round(x - tip.x)] ?? null;
+
+  it('drar tillbaka spetsen förbi skuggan till första ljusa pilpixeln', () => {
+    const r = trimShadowAtTip(tip, axis, sample);
+    expect(r.trimmedPx).toBe(8); // s = 0..-7 är skugga/neutral, -8 är +18 ljusare
+    expect(r.tip.x).toBeCloseTo(92, 5);
+  });
+
+  it('rör inte en pil som är mörk ända ut i spetsen', () => {
+    const r = trimShadowAtTip(tip, axis, () => ({ cur: 60, ref: 200 })); // 140 mörkare = föremål
+    expect(r.trimmedPx).toBe(0);
+  });
+
+  it('rör inte en pil som är ljus ända ut i spetsen', () => {
+    const r = trimShadowAtTip(tip, axis, () => ({ cur: 230, ref: 120 }));
+    expect(r.trimmedPx).toBe(0);
+  });
+
+  it('trimmar aldrig mer än taket', () => {
+    const r = trimShadowAtTip(tip, axis, () => ({ cur: 180, ref: 200 }), { maxPx: 20 });
+    expect(r.trimmedPx).toBe(20);
   });
 });

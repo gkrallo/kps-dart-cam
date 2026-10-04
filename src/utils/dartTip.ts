@@ -273,3 +273,75 @@ export function chooseDartTip(input: TipChoiceInput): TipChoice {
         : ' (rund men skuggtestet kunde inte frikänna den)'),
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Skuggan vid spetsen
+ * ------------------------------------------------------------------ */
+
+export interface GreyPair {
+  /** Gråvärde i den aktuella bilden. */
+  cur: number;
+  /** Gråvärde i referensbilden (tavlan utan den här pilen). */
+  ref: number;
+}
+
+export interface ShadowTrimOptions {
+  /** Längsta sträcka som får trimmas (px). Mer än så är inte en skugga. */
+  maxPx?: number;
+  /** Så mycket mörkare än referensen måste en pixel vara för att räknas som skugga. */
+  minDarker?: number;
+  /** Mörkare än så är det ett föremål (stålspetsen, pilkroppen), inte skugga. */
+  maxDarker?: number;
+}
+
+export interface ShadowTrimResult {
+  tip: Point;
+  /** Antal pixlar spetsen flyttades bakåt längs axeln. */
+  trimmedPx: number;
+}
+
+/**
+ * Drar tillbaka spetsen förbi pilens skugga.
+ *
+ * Uppmätt 2026-10-04 (T15 läst som S15 på 98,5 mm): med ringlampa runt tavlan
+ * faller pilens skugga INÅT mot bullen, och vid spetsänden fortsätter den
+ * 10-15 px bortom stålspetsen. Skuggan är 13-34 gråvärden mörkare än den
+ * tomma tavlan men bär tavlans mönster, så den kommer med i masken (tröskel
+ * 10) och binds ihop med pilen av morfologin. Axelmetodens extrempunkt hamnar
+ * då i skuggans ände, 6 mm för långt in. Pilkroppen själv är däremot antingen
+ * mycket ljusare (silver mot svart fält, +100) eller mycket mörkare än tavlan.
+ *
+ * Gå från spetsen bakåt längs axeln så länge pixeln INTE är pilmaterial:
+ * neutral (maskens kant efter morfologin ligger en pixel utanför skuggan) eller
+ * måttligt mörkare än referensen (skugga). Första pixel som är tydligt
+ * ljusare eller mycket mörkare än referensen är pilen - där stannar vi.
+ * `sample` läser gråvärdena; medelvärde över en liten tvärbredd är anroparens
+ * sak. Trimmas inget returneras spetsen oförändrad.
+ *
+ * Verifierat offline mot bildparet från 2026-10-04 (scripts/tip-profile.ts):
+ * appens spets 98,5 mm (S15) -> trimmad 104-105 mm (T15, facit).
+ */
+export function trimShadowAtTip(
+  tip: Point,
+  axisTowardTip: Point,
+  sample: (x: number, y: number) => GreyPair | null,
+  opts: ShadowTrimOptions = {},
+): ShadowTrimResult {
+  const maxPx = opts.maxPx ?? 20;
+  const minDarker = opts.minDarker ?? 6;
+  const maxDarker = opts.maxDarker ?? 45;
+  const n = Math.hypot(axisTowardTip.x, axisTowardTip.y) || 1;
+  const ux = axisTowardTip.x / n;
+  const uy = axisTowardTip.y / n;
+  let trimmed = 0;
+  for (let s = 0; s < maxPx; s++) {
+    const g = sample(tip.x - ux * s, tip.y - uy * s);
+    if (!g) break;
+    const darker = g.ref - g.cur;
+    // Ljusare än referensen med marginal, eller mycket mörkare: material.
+    if (darker < -minDarker || darker > maxDarker) break;
+    trimmed = s + 1;
+  }
+  if (trimmed === 0) return { tip, trimmedPx: 0 };
+  return { tip: { x: tip.x - ux * trimmed, y: tip.y - uy * trimmed }, trimmedPx: trimmed };
+}
