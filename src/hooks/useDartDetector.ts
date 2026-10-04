@@ -914,7 +914,28 @@ const STARTUP_GRACE_MS = 2000;
      * (mindre skiljer sig - närmare nivån under toppen). Se kommentaren vid
      * `snapshots`.
      */
-    const analyseChange = () => {
+    /**
+     * Bildnivåspärr mot främmande föremål. Uppmätt 2026-10-04: en pil ger
+     * 7 000-14 000 skilda pixlar mot förra bilden, två pilar som smält ihop
+     * 14 000, medan en arm som står stilla i bild (handplacering, uttagning)
+     * ger 47 000-112 000. Alla kvällens spökkast kom ur analyser av sådana
+     * bildrutor: armen skymde en känd pil, avstämningen trodde den var
+     * uttagen, och någon del av armen eller dess skugga blev "dold pil".
+     * Blobbfiltren (maxArea, skuggtest) räcker inte, för felet sitter i att
+     * avstämningen alls körs när halva tavlan är skymd. Så länge skillnaden
+     * är så här stor väntar vi - utan att uppdatera referensen, så analysen
+     * görs om när föremålet är borta.
+     *
+     * Ligger skillnaden kvar längre än HAND_PATIENCE_MS är det inget föremål
+     * utan ett ljusskifte (lampa, moln, dörr) - då analyseras bilden som
+     * vanligt och, hittas ingen pil, tas HELA bilden upp i referensen.
+     */
+    const HAND_PX = 25000;
+    const HAND_PATIENCE_MS = 8000;
+    let hugeSince = 0;
+
+    /** Returnerar 'skip' när analysen sköts upp (referensen ska då INTE uppdateras). */
+    const analyseChange = (): 'skip' | undefined => {
       lastDiag = '';
       const frameArea = rawGray.rows * rawGray.cols || 1;
       const minArea = frameArea * 0.0002;
@@ -926,6 +947,20 @@ const STARTUP_GRACE_MS = 2000;
       cv.absdiff(rawGray, top, rawDiff);
       cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
       const dTop = cv.countNonZero(rawThresh);
+
+      let lightingShift = false;
+      if (dTop > HAND_PX) {
+        const nowMs = performance.now();
+        if (hugeSince === 0) hugeSince = nowMs;
+        if (nowMs - hugeSince < HAND_PATIENCE_MS) {
+          lastAnalysis = `främmande föremål i bild (${dTop} px skiljer sig, > ${HAND_PX}) - väntar`;
+          logAnalysis('HAND', dTop, Infinity);
+          return 'skip';
+        }
+        lightingShift = true;
+      } else {
+        hugeSince = 0;
+      }
 
       let dBase = Infinity;
       const hasBelow = snapshots.length >= 2;
@@ -1027,8 +1062,10 @@ const STARTUP_GRACE_MS = 2000;
       // Vanligt nytt kast: mer material än toppen av stacken hade.
       const found = findDartTip(rawThresh, top, frameArea);
       if (found) registerNewThrow(found);
-      else absorbBlobRegion(); // skugga/hand/ljusskifte - bara blobbens yta
-      logAnalysis('KAST', dTop, dBase);
+      else if (lightingShift) absorbIntoTop(); // bestående ljusskifte: ta hela bilden
+      else absorbBlobRegion(); // skugga/hand - bara blobbens yta
+      logAnalysis(lightingShift ? 'KAST/LJUS' : 'KAST', dTop, dBase);
+      return undefined;
     };
 
     const drawOverlay = (state: string) => {
@@ -1112,13 +1149,17 @@ const STARTUP_GRACE_MS = 2000;
         if (now - lastMotionTime > 500) {
           isStabilizing = false;
           state = 'ANALYZING';
+          let skipped = false;
           if (now - startedAt > STARTUP_GRACE_MS) {
-            analyseChange();
+            skipped = analyseChange() === 'skip';
           } else {
             lastAnalysis = 'hoppar över (uppstartsspärr)';
             absorbIntoTop(); // annars ligger uppstartsrörelsen kvar i diffen
           }
-          gray.copyTo(baseline);
+          // Vid uppskjuten analys lämnas referensen orörd, så att
+          // baselineNoise fortsätter trigga och bilden analyseras om när
+          // föremålet är borta.
+          if (!skipped) gray.copyTo(baseline);
         } else {
           state = 'STABILIZING';
         }
