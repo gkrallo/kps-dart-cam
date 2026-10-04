@@ -454,6 +454,14 @@ export const useDartDetector = (
  */
 const CLEAR_PX = 400;
 const MATERIAL_PX = 2000;
+/**
+ * Över så här många skilda pixlar mot tom tavla är det inte pilar utan en
+ * människa eller hennes skugga över tavlan. Tre pilar mäter ~20 000 i den
+ * warpade bilden; en person framför tavlan 70 000-115 000 (uppmätt
+ * 2026-10-04, då någon stod 11 s framför tavlan efter ett turslut och NÄSTA
+ * spelares tur avslutades med noll pilar eftersom "material" suttit > 3 s).
+ */
+const MATERIAL_MAX_PX = 45000;
 /** Så länge måste något ha suttit i tavlan för att räknas som en spelad tur. */
 const MATERIAL_HOLD_MS = 3000;
 /** Hur ofta kollen mot tom tavla görs. En uttagning är långsam; 5 Hz räcker. */
@@ -1391,7 +1399,12 @@ const STARTUP_GRACE_MS = 2000;
           const emptyPx = cv.countNonZero(emptyThresh);
           lastEmptyPxWarped = emptyPx;
 
-          if (emptyPx >= MATERIAL_PX) {
+          if (emptyPx > MATERIAL_MAX_PX) {
+            // En person, inte pilar: räknas inte som spelad tur, och nollar
+            // det som hunnit räknas - annars blir "stod framför tavlan" ett
+            // turslut så fort hon går därifrån.
+            materialSince = 0;
+          } else if (emptyPx >= MATERIAL_PX) {
             if (materialSince === 0) materialSince = now;
           } else if (emptyPx < CLEAR_PX) {
             const heldMs = materialSince === 0 ? 0 : now - materialSince;

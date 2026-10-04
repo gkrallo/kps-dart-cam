@@ -519,3 +519,30 @@ axel ur pilkroppen, inte hela blobben).
 Så nära bullen är 1° en halv millimeter, och precisionen är omkring en
 millimeter. Inget fel att rätta i detektorn; det är fallet för
 osäkerhetsflaggan ("18 eller 4?") på avstånd till närmaste tråd.
+
+### Sista varvet (23:00), ur loggen från snabbt riktigt spel
+
+Fyra småsaker till, alla rättade i `c200e21` och commiten efter:
+
+- **Armspärrens tålamod (8 s) gick ut** när en spelare stod vid tavlan
+  längre än så, och en bild med armen i analyserades (70 000 px, skräpblobb
+  registrerad). Rörelse nollställer nu timern: ett ljusskifte rör sig inte,
+  en människa gör det.
+- **Skuggtrimningen nådde taket 20 px** i tre av fem registreringar:
+  stålspetsen över gräddvitt ser ut som skugga. Taket 16 px begränsar
+  övertrimningen till ~1 mm.
+- **En kompakt blobb** (vinge på en pil som rört sig, 47 % gammalt material)
+  registrerades via tyngdpunkten som MISS på 175 mm. Tyngdpunktsgrenen kräver
+  nu < 25 % gammalt material.
+- **En person framför tavlan i 11–25 s räknades som "en tur har spelats"** och
+  nästa spelares tur avslutades med noll pilar när personen gick (två gånger).
+  Material över 45 000 warpade pixlar är inte pilar och nollställer timern.
+
+Positivt ur samma logg: hålet efter en uttagen pil avfärdades korrekt flera
+gånger, en skymd tredje pil hittades som dold vid uttagningen och sattes in,
+spärren "nyss glömd pil" stoppade en felaktig dold pil, och den nya
+"fanns före"-mätningen låg på 0–9 % för riktiga kast.
+
+**Lärdom för nästa session:** riktigt, snabbt spel med flera personer vid
+tavlan är en helt annan miljö än ensamkastning med paus. Allt som bygger på
+"stilla bild" måste tåla att någon står i bild i halvminuter.
