@@ -73,6 +73,12 @@ export const useDartDetector = (
    * onDartDetected/onHiddenDartRevealed för den pilen.
    */
   onDartCorrected?: (seq: number, tip: Point) => void,
+  /**
+   * Anropas när en stor del av bilden ändrats och legat kvar (zoom tappad,
+   * kameran knuffad, lampa tänd/släckt): `true` när det upptäcks, `false`
+   * när bilden återgått. Under tiden analyseras ingenting.
+   */
+  onSceneChanged?: (changed: boolean) => void,
   /** Loggar utförligt till konsolen. Styrs av ?debug i URL:en. */
   debug = false,
 ) => {
@@ -85,6 +91,7 @@ export const useDartDetector = (
   const onHiddenDartRevealedRef = useRef(onHiddenDartRevealed);
   const onDartRemovedRef = useRef(onDartRemoved);
   const onDartCorrectedRef = useRef(onDartCorrected);
+  const onSceneChangedRef = useRef(onSceneChanged);
   const motionThresholdRef = useRef(motionThreshold);
   const debugRef = useRef(debug);
   useEffect(() => {
@@ -94,6 +101,7 @@ export const useDartDetector = (
     onHiddenDartRevealedRef.current = onHiddenDartRevealed;
     onDartRemovedRef.current = onDartRemoved;
     onDartCorrectedRef.current = onDartCorrected;
+    onSceneChangedRef.current = onSceneChanged;
     motionThresholdRef.current = motionThreshold;
     debugRef.current = debug;
   });
@@ -386,6 +394,48 @@ export const useDartDetector = (
     };
     const PRIOR_MATERIAL_MAX_FRACTION = 0.5;
     const PRIOR_MATERIAL_MAX_COMPACT = 0.25;
+
+    /**
+     * Försvann något? Andelen av blobbens pixlar där det FÖRUT fanns material
+     * (toppen skilde sig från tom tavla) men NU syns tom tavla igen.
+     *
+     * Uppmätt 2026-10-05: två riktiga missar landade med vingarna ovanpå en
+     * registrerad pils vinge, fick 51-52 % "fanns före", och togs av spärren
+     * mot vibrerade pilar. Skillnaden mot en pil som verkligen rört sig: den
+     * LÄMNAR yta efter sig - där den satt syns tavlan igen. En ny pil som
+     * landar ovanpå en gammal lämnar ingenting; den gamla sitter kvar under.
+     */
+    const vacatedFraction = (f: TipFind): number => {
+      const empty = snapshots[0];
+      const top = snapshots[snapshots.length - 1];
+      if (!empty || !top || top === empty || !f.mask) return 0;
+      const cols = rawGray.cols;
+      const x0 = Math.max(0, f.rect.x);
+      const y0 = Math.max(0, f.rect.y);
+      const x1 = Math.min(cols, f.rect.x + f.rect.width);
+      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
+      if (x1 <= x0 || y1 <= y0) return 0;
+      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
+      const mask = f.mask.data;
+      const cur = rawGray.data;
+      const before = top.data;
+      const ref = empty.data;
+      let n = 0;
+      let m = 0;
+      for (let y = y0; y < y1; y += step) {
+        const off = y * cols;
+        for (let x = x0; x < x1; x += step) {
+          if (!mask[off + x]) continue;
+          n++;
+          const hadMaterial = Math.abs(before[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD;
+          const nowEmpty = Math.abs(cur[off + x] - ref[off + x]) <= RAW_DIFF_THRESHOLD;
+          if (hadMaterial && nowEmpty) m++;
+        }
+      }
+      return n ? m / n : 0;
+    };
+    /** Under det här har ingenting lämnat platsen - då är det inte en pil som rört sig. */
+    const VACATED_MIN_FRACTION = 0.1;
 
     let rafId = 0;
     let stopped = false;
@@ -855,6 +905,7 @@ const STARTUP_GRACE_MS = 2000;
       // tavlan hoppas över och nästa får prövas.
       const material = materialFraction(found);
       const prior = priorMaterialFraction(found);
+      const vacated = vacatedFraction(found);
       if (tooSoon) {
         lastAnalysis = `pil ignorerad (för snabbt efter förra, ${((nowMs - lastRegisterTime) / 1000).toFixed(1)} s)`;
         absorbBlobRegion();
@@ -864,11 +915,15 @@ const STARTUP_GRACE_MS = 2000;
       } else if (material < MATERIAL_MIN_FRACTION) {
         lastAnalysis = `pil ignorerad (blobben matchar tom tavla till ${Math.round((1 - material) * 100)} % - hål efter uttagen pil, inte material)`;
         absorbBlobRegion();
-      } else if (prior > (found.confidence > 0 ? PRIOR_MATERIAL_MAX_FRACTION : PRIOR_MATERIAL_MAX_COMPACT)) {
+      } else if (
+        prior > (found.confidence > 0 ? PRIOR_MATERIAL_MAX_FRACTION : PRIOR_MATERIAL_MAX_COMPACT) &&
+        vacated >= VACATED_MIN_FRACTION
+      ) {
         // Kompakta blobbar (tyngdpunktsgrenen, ingen axel) är de farliga:
         // en vinge på en pil som rört sig ser ut så (uppmätt 2026-10-04: 47 %
         // gammalt material, registrerad som MISS på 175 mm). Strängare krav.
-        lastAnalysis = `pil ignorerad (${Math.round(prior * 100)} % av blobben låg där en pil redan satt - en registrerad pil har rört sig, inget nytt kast)`;
+        // Men bara om något också LÄMNADE platsen - se vacatedFraction.
+        lastAnalysis = `pil ignorerad (${Math.round(prior * 100)} % av blobben låg där en pil redan satt och ${Math.round(vacated * 100)} % lämnades tom - en registrerad pil har rört sig, inget nytt kast)`;
         absorbBlobRegion();
       } else {
         lastRegisterTime = nowMs;
@@ -883,7 +938,7 @@ const STARTUP_GRACE_MS = 2000;
         // sista utvärderade kandidaten, som i avstämningsläget ofta är en
         // redan registrerad pil - loggen pekade då på fel pil.
         lastDiag = found.diag;
-        lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %, fanns före ${Math.round(prior * 100)} %)`;
+        lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %, fanns före ${Math.round(prior * 100)} %, lämnat ${Math.round(vacated * 100)} %)`;
         onDartDetectedRef.current(tip, seq);
       }
     };
@@ -1136,6 +1191,18 @@ const STARTUP_GRACE_MS = 2000;
     const HAND_PX = 25000;
     const HAND_PATIENCE_MS = 8000;
     let hugeSince = 0;
+    /**
+     * Andel av bilden som får ändras innan det inte längre kan vara ett
+     * ljusskifte på tavlan utan att själva bilden är en annan: zoomen tappad
+     * (uppmätt 2026-10-05: 1,76 och 1,78 miljoner av 2,07 miljoner pixlar,
+     * två gånger samma kväll efter appbyten), kameran knuffad, eller någon
+     * som står helt stilla tätt framför linsen. Förut analyserades sådana
+     * bilder efter 8 s som "ljusskifte", och då bokfördes en pil som uttagen.
+     * Nu rörs pilbokföringen aldrig; appen säger till och väntar tills bilden
+     * är tillbaka eller någon kalibrerar om.
+     */
+    const SCENE_CHANGE_FRACTION = 0.4;
+    let sceneChanged = false;
 
     /** Returnerar 'skip' när analysen sköts upp (referensen ska då INTE uppdateras). */
     const analyseChange = (): 'skip' | undefined => {
@@ -1155,6 +1222,17 @@ const STARTUP_GRACE_MS = 2000;
       if (dTop > HAND_PX) {
         const nowMs = performance.now();
         if (hugeSince === 0) hugeSince = nowMs;
+        if (dTop > frameArea * SCENE_CHANGE_FRACTION) {
+          if (!sceneChanged && nowMs - hugeSince >= HAND_PATIENCE_MS) {
+            sceneChanged = true;
+            onSceneChangedRef.current?.(true);
+          }
+          lastAnalysis = sceneChanged
+            ? `BILDEN ÄNDRAD (${Math.round((dTop / frameArea) * 100)} % av bilden) - zoom, kamera eller ljus. Ingen analys förrän den är tillbaka eller kalibrerats om.`
+            : `stor del av bilden ändrad (${Math.round((dTop / frameArea) * 100)} %) - väntar`;
+          logAnalysis(sceneChanged ? 'SCEN' : 'HAND', dTop, Infinity);
+          return 'skip';
+        }
         if (nowMs - hugeSince < HAND_PATIENCE_MS) {
           lastAnalysis = `främmande föremål i bild (${dTop} px skiljer sig, > ${HAND_PX}) - väntar`;
           logAnalysis('HAND', dTop, Infinity);
@@ -1163,6 +1241,10 @@ const STARTUP_GRACE_MS = 2000;
         lightingShift = true;
       } else {
         hugeSince = 0;
+        if (sceneChanged) {
+          sceneChanged = false;
+          onSceneChangedRef.current?.(false);
+        }
       }
 
       let dBase = Infinity;

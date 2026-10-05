@@ -352,6 +352,19 @@ export default function App() {
     window.setTimeout(() => setLastScoredDartLabel(null), 3000);
   }, [match, editThrow]);
 
+  /**
+   * Bilden har ändrats för mycket för att vara pilar eller en hand: zoomen
+   * tappad, kameran knuffad, ljuset ändrat. Detektorn står still tills bilden
+   * är tillbaka; säg till högt, för spelaren ser inte skärmen.
+   */
+  const [sceneChanged, setSceneChanged] = useState(false);
+  const handleSceneChanged = useCallback((changed: boolean) => {
+    setSceneChanged(changed);
+    if (changed) {
+      audioEngine.speak('Kameran ser en annan bild än vid kalibreringen. Kontrollera telefonen och kalibrera om.');
+    }
+  }, []);
+
   const handleDebugState = useCallback((info: DetectorDebug) => {
     setDetectorState(info.state);
     setDebugInfo(info);
@@ -373,6 +386,7 @@ export default function App() {
     handleHiddenDartRevealed,
     handleDartRemoved,
     handleDartCorrected,
+    handleSceneChanged,
     debugMode,
   );
 
@@ -424,6 +438,7 @@ export default function App() {
   }, [waitingForRetrieval, hasEndTurn]);
 
   const handleCalibrationClick = () => {
+    setSceneChanged(false); // ny kalibrering = ny referensbild
     if (isCalibrated) {
       setTransformMatrix(null); // effekten nedan raderar den gamla matrisen
       setIsCalibrated(false);
@@ -609,6 +624,16 @@ export default function App() {
             <div>baselineNoise {debugInfo.baselineNoise} <span className="text-slate-500">(&gt;500 → analys)</span></div>
             <div>movementNoise {debugInfo.movementNoise} <span className="text-slate-500">(&gt;{debugInfo.motionThreshold} → rörelse)</span></div>
             {debugInfo.lastAnalysis && <div className="text-amber-300 mt-1">{debugInfo.lastAnalysis}</div>}
+          </div>
+        )}
+
+        {sceneChanged && isCalibrated && (
+          <div className="absolute top-20 left-3 right-3 z-30 bg-red-950/95 border border-red-500/60 text-red-100 rounded-2xl px-4 py-3 shadow-2xl text-center">
+            <div className="font-black text-lg">Bilden har ändrats</div>
+            <div className="text-sm">
+              Zoom, kamera eller ljus är inte som vid kalibreringen. Avläsningen står still.
+              Tryck <b>Kalibrera om</b> när tavlan är tom.
+            </div>
           </div>
         )}
 

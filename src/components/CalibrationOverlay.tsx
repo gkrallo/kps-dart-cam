@@ -221,18 +221,21 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     }
     setPoints(res.points);
     onPointsChange(res.points);
-    const mm = (px: number) => (px * 0.425).toFixed(1); // containerpx ≈ warpad skala är inte känd här; residualen rapporteras i px
+    // Färgkanten ligger 0,6 mm innanför 170 (tråden täcker gränsen, se
+    // ringRefine.ts). Uppmätt 2026-10-05: meddelandet jämförde med 170 och
+    // sa "0,9 mm fel" omväxlande uppe och nere på en kalibrering som satt på
+    // 0,3 mm.
+    const EDGE = 170 - 0.6;
     const worst = res.beforeDoubleMM
       .map((v, i) => ({ v, i }))
       .filter((q) => Number.isFinite(q.v))
-      .sort((a, b) => Math.abs(b.v - 170) - Math.abs(a.v - 170))[0];
+      .sort((a, b) => Math.abs(b.v - EDGE) - Math.abs(a.v - EDGE))[0];
     const names = ['uppe', 'till höger', 'nertill', 'till vänster'];
     setDetectStatus(
-      worst && Math.abs(worst.v - 170) >= 0.8
-        ? `Ringen låg ${Math.abs(worst.v - 170).toFixed(1)} mm fel ${names[worst.i]} - rättat. Passning ${res.residualPx.toFixed(1)} px (${res.samples} kantpunkter).`
+      worst && Math.abs(worst.v - EDGE) >= 0.8
+        ? `Ringen låg ${Math.abs(worst.v - EDGE).toFixed(1)} mm fel ${names[worst.i]} - rättat. Passning ${res.residualPx.toFixed(1)} px (${res.samples} kantpunkter).`
         : `Kalibreringen satt redan rätt (inom 0,8 mm). Passning ${res.residualPx.toFixed(1)} px.`,
     );
-    void mm;
     window.setTimeout(() => setDetectStatus(null), 7000);
   };
 

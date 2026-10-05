@@ -117,6 +117,33 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     };
   }, [onVideoReady, onZoomCapability, syncSize]);
 
+  // Senaste begärda zoom, för att kunna lägga på den igen efter ett appbyte.
+  const zoomRef = useRef(zoomLevel);
+  zoomRef.current = zoomLevel;
+
+  /**
+   * Lägger på zoomen igen. Uppmätt 2026-10-05 på Galaxy S25: efter ett appbyte
+   * (aviseringar, YouTube) gick kameran tillbaka till 1x medan
+   * `track.getSettings().zoom` fortfarande rapporterade 2,04 - så ett
+   * applyConstraints med samma värde var en no-op. Hela bilden ändrades,
+   * kalibreringen blev fel, och detektorn tog det för ett ljusskifte. Därför
+   * först ett annat värde, sedan det rätta.
+   */
+  const reapplyZoom = useCallback(() => {
+    const track = videoTrackRef.current;
+    if (!track) return;
+    const caps: any = track.getCapabilities?.() ?? {};
+    if (!caps.zoom) return;
+    const min = caps.zoom.min ?? 1;
+    const max = caps.zoom.max ?? 1;
+    const target = Math.min(Math.max(zoomRef.current, min), max);
+    const nudge = target - (caps.zoom.step || 0.1) >= min ? target - (caps.zoom.step || 0.1) : target + (caps.zoom.step || 0.1);
+    track
+      .applyConstraints({ advanced: [{ zoom: nudge } as any] })
+      .then(() => track.applyConstraints({ advanced: [{ zoom: target } as any] }))
+      .catch((err) => console.warn('Kunde inte lägga på zoomen igen:', err));
+  }, []);
+
   // Android Chrome PAUSAR videoelementet när appen går i bakgrunden (byte till
   // annan app, skärmen slocknar) och återupptar det INTE när man kommer
   // tillbaka. Strömmen mår bra - spåret är "live", omutat och aktivt, och
@@ -149,6 +176,10 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return;
       resume();
+      // Kameran kan ha återställts till 1x under tiden, se reapplyZoom.
+      // Kort fördröjning: spåret behöver hinna starta om innan det tar emot
+      // constraints (jfr frysningen vid applyConstraints för tidigt).
+      window.setTimeout(reapplyZoom, 600);
       if (!lock || lock.released) void acquireLock();
     };
 
@@ -161,7 +192,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
       video?.removeEventListener('pause', resume);
       void lock?.release?.().catch(() => undefined);
     };
-  }, []);
+  }, [reapplyZoom]);
 
   // Hårdvaruzoom. Väntar på att videon FAKTISKT levererar bildrutor:
   // applyConstraints på ett spår som ännu inte hunnit starta låser strömmen
