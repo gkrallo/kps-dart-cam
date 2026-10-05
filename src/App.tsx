@@ -6,7 +6,8 @@ import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { Point } from './types';
 import { useDartDetector, type DetectorDebug } from './hooks/useDartDetector';
 import { useMatch } from './hooks/useMatch';
-import { getScoreFromPixel } from './utils/dartMath';
+import { getScoreFromPixel, pixelToCanonical } from './utils/dartMath';
+import type { DetectionMeta } from './game/types';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
@@ -27,6 +28,18 @@ const RETRIEVAL_TIP_SEEN_KEY = 'kps-dart-cam:retrieval-tip-seen';
  * lika gärna gårdagens match, och då är en tyst återupptagning bara förvirrande.
  */
 const AUTO_RESUME_MS = 2 * 60 * 1000;
+
+/** Vad detektorn såg, för rättningsloggen (följer med kastet i kastlistan). */
+function detectionMeta(pt: Point, label: string, info: { how: string; diag: string }): DetectionMeta {
+  const { X, Y } = pixelToCanonical(pt.x, pt.y);
+  return {
+    label,
+    rMM: Math.round(Math.hypot(X, Y) * 10) / 10,
+    deg: Math.round((((Math.atan2(X, -Y) * 180) / Math.PI + 360) % 360) * 10) / 10,
+    how: info.how,
+    ...(info.diag ? { diag: info.diag } : {}),
+  };
+}
 
 export default function App() {
   const { isLoaded, isLoading, error, cv } = useOpenCV();
@@ -150,9 +163,9 @@ export default function App() {
     setCalibrationPoints(points);
   }, []);
 
-  const handleDartDetected = useCallback((pt: Point, seq: number) => {
+  const handleDartDetected = useCallback((pt: Point, seq: number, info: { how: string; diag: string }) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
-    const res = throwSeg(segFromDartScore(scoreObj));
+    const res = throwSeg(segFromDartScore(scoreObj), detectionMeta(pt, scoreObj.label, info));
     dartsSinceClearRef.current += 1;
     if (res?.accepted) {
       const last = res.state.log[res.state.log.length - 1];
@@ -299,7 +312,7 @@ export default function App() {
   // detektorn ska kunna säga till, och för framtida UI.
   const handleDartRemoved = useCallback(() => {}, []);
 
-  const handleHiddenDartRevealed = useCallback((pt: Point, seq: number) => {
+  const handleHiddenDartRevealed = useCallback((pt: Point, seq: number, info: { how: string; diag: string }) => {
     // Är matchen avgjord tar motorn ändå inte emot kastet (canThrow → false),
     // och då blir det bara en död post i listan plus ett förvirrande
     // "dold pil hittades" efter att någon redan vunnit.
@@ -310,7 +323,7 @@ export default function App() {
     // Ställningen med: i Farfar är turen redan stängd när en pil saknas, och
     // då måste pilen in före den som stängde turen - inte hos nästa spelare.
     const at = insertIndexForRevealedThrow(match.actions, matchState(match));
-    const accepted = insertMissingThrow(at, seg);
+    const accepted = insertMissingThrow(at, seg, { ...detectionMeta(pt, scoreObj.label, info), revealed: true });
     if (!accepted) {
       // Turen var redan full (301/501): pilen kom inte in. Säg det, i stället
       // för att läsa upp ett kast som inte finns.
@@ -343,7 +356,7 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const seg = segFromDartScore(scoreObj);
     if (entry.dart.v === seg.v && entry.dart.m === seg.m) return;
-    editThrow(ai, seg);
+    editThrow(ai, seg, 'auto');
     const oldLabel = entry.dart.v === 0 ? 'MISS' : entry.dart.v === 25 ? (entry.dart.m === 2 ? 'DB' : '25') : `${entry.dart.m === 3 ? 'T' : entry.dart.m === 2 ? 'D' : 'S'}${entry.dart.v}`;
     audioEngine.speak(
       `Rättar: ${audioEngine.scoreText(oldLabel, entry.dart.v * entry.dart.m)} blir ${audioEngine.scoreText(scoreObj.label, scoreObj.totalPoints)}.`,

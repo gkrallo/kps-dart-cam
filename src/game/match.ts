@@ -6,6 +6,7 @@ import type {
   MatchConfig,
   MatchState,
   Seg,
+  DetectionMeta,
 } from './types';
 import { x01Engine } from './x01';
 import { farfarEngine } from './farfar';
@@ -105,9 +106,9 @@ function bump(match: Match): MatchState {
 
 /* --- handlingar ------------------------------------------------------- */
 
-export function throwDart(match: Match, dart: Seg): MatchState {
+export function throwDart(match: Match, dart: Seg, meta?: DetectionMeta): MatchState {
   const before = matchState(match).log.length;
-  match.actions.push({ t: 'T', v: dart.v, m: dart.m });
+  match.actions.push({ t: 'T', v: dart.v, m: dart.m, ...(meta ? { d: meta } : {}) });
   const st = bump(match);
   if (st.log.length === before) {
     // kastet var inte tillåtet just nu - ta bort det igen
@@ -185,10 +186,15 @@ export function replaceThrow(match: Match, actionIndex: number, dart: Seg): Matc
  * turordningen blir rätt även om den avslöjade pilen egentligen kastades
  * före ett redan registrerat kast.
  */
-export function insertThrow(match: Match, actionIndex: number, dart: Seg): MatchState {
+export function insertThrow(
+  match: Match,
+  actionIndex: number,
+  dart: Seg,
+  meta?: DetectionMeta,
+): MatchState {
   const at = Math.max(0, Math.min(actionIndex, match.actions.length));
   const before = matchState(match).log.length;
-  match.actions.splice(at, 0, { t: 'T', v: dart.v, m: dart.m });
+  match.actions.splice(at, 0, { t: 'T', v: dart.v, m: dart.m, ...(meta ? { d: meta } : {}) });
   const st = bump(match);
   // Samma regel som throwDart: fick pilen ingen effekt (turen var redan full
   // i 301/501) ska den inte ligga kvar som ett dött kast som tyst dyker upp

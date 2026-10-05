@@ -4,6 +4,7 @@ import { BOARD_MM, BOARD_PX, MM_PER_PX, PX_PER_MM, getScoreFromPixel } from '../
 import { chooseDartTip, detectDartAxisTip, trimShadowAtTip } from '../utils/dartTip';
 import { classifyShadow, type BlobSample } from '../utils/shadowTest';
 import { boundingRect, groupFragments, minAreaRect } from '../utils/blobGroups';
+import { blobPixelStats } from '../utils/blobPixels';
 import {
   interpretCensus,
   reconcileDarts,
@@ -55,7 +56,7 @@ export const useDartDetector = (
   isActive: boolean,
   motionThreshold: number,
   debugCanvasRef: RefObject<HTMLCanvasElement | null>,
-  onDartDetected: (tip: Point, seq: number) => void,
+  onDartDetected: (tip: Point, seq: number, info: { how: string; diag: string }) => void,
   onDebugState?: (info: DetectorDebug) => void,
   /** Anropas när tavlan blivit tömd på pilar igen (efter minst en detekterad pil). */
   onBoardCleared?: () => void,
@@ -64,7 +65,7 @@ export const useDartDetector = (
    * kommentaren vid `snapshots` nedan). Ska sättas in FÖRE den senast kastade
    * pilen i turordningen, inte sist.
    */
-  onHiddenDartRevealed?: (tip: Point, seq: number) => void,
+  onHiddenDartRevealed?: (tip: Point, seq: number, info: { how: string; diag: string }) => void,
   /** Anropas vid varje bekräftad, ren uttagning (ingen dold pil avslöjades). */
   onDartRemoved?: () => void,
   /**
@@ -326,31 +327,23 @@ export const useDartDetector = (
      * Testas bara på blobbens egna pixlar (masken), så en grannpil som
      * ligger inom samma rektangel påverkar inte svaret.
      */
-    const materialFraction = (f: TipFind): number => {
+    /** De tre pixelmåtten för en blobb i ett svep - se utils/blobPixels.ts. */
+    const statsOf = (f: TipFind) => {
       const empty = snapshots[0];
-      if (!empty || !f.mask) return 1;
-      const cols = rawGray.cols;
-      const x0 = Math.max(0, f.rect.x);
-      const y0 = Math.max(0, f.rect.y);
-      const x1 = Math.min(cols, f.rect.x + f.rect.width);
-      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
-      if (x1 <= x0 || y1 <= y0) return 1;
-      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
-      const mask = f.mask.data;
-      const cur = rawGray.data;
-      const ref = empty.data;
-      let n = 0;
-      let m = 0;
-      for (let y = y0; y < y1; y += step) {
-        const off = y * cols;
-        for (let x = x0; x < x1; x += step) {
-          if (!mask[off + x]) continue;
-          n++;
-          if (Math.abs(cur[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD) m++;
-        }
-      }
-      return n ? m / n : 1;
+      const top = snapshots[snapshots.length - 1];
+      if (!empty || !f.mask) return { material: 1, prior: 0, vacated: 0, n: 0 };
+      return blobPixelStats({
+        cols: rawGray.cols,
+        rows: rawGray.rows,
+        rect: f.rect,
+        mask: f.mask.data,
+        cur: rawGray.data,
+        before: top && top !== empty ? top.data : null,
+        empty: empty.data,
+        threshold: RAW_DIFF_THRESHOLD,
+      });
     };
+    const materialFraction = (f: TipFind): number => statsOf(f).material;
     const MATERIAL_MIN_FRACTION = 0.5;
 
     /**
@@ -366,32 +359,7 @@ export const useDartDetector = (
      * rört sig ligger där det redan FANNS en pil; en ny pil landar där tavlan
      * var tom. Det är skillnaden.
      */
-    const priorMaterialFraction = (f: TipFind): number => {
-      const empty = snapshots[0];
-      const top = snapshots[snapshots.length - 1];
-      if (!empty || !top || top === empty || !f.mask) return 0;
-      const cols = rawGray.cols;
-      const x0 = Math.max(0, f.rect.x);
-      const y0 = Math.max(0, f.rect.y);
-      const x1 = Math.min(cols, f.rect.x + f.rect.width);
-      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
-      if (x1 <= x0 || y1 <= y0) return 0;
-      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
-      const mask = f.mask.data;
-      const before = top.data;
-      const ref = empty.data;
-      let n = 0;
-      let m = 0;
-      for (let y = y0; y < y1; y += step) {
-        const off = y * cols;
-        for (let x = x0; x < x1; x += step) {
-          if (!mask[off + x]) continue;
-          n++;
-          if (Math.abs(before[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD) m++;
-        }
-      }
-      return n ? m / n : 0;
-    };
+    const priorMaterialFraction = (f: TipFind): number => statsOf(f).prior;
     const PRIOR_MATERIAL_MAX_FRACTION = 0.5;
     const PRIOR_MATERIAL_MAX_COMPACT = 0.25;
 
@@ -405,35 +373,7 @@ export const useDartDetector = (
      * LÄMNAR yta efter sig - där den satt syns tavlan igen. En ny pil som
      * landar ovanpå en gammal lämnar ingenting; den gamla sitter kvar under.
      */
-    const vacatedFraction = (f: TipFind): number => {
-      const empty = snapshots[0];
-      const top = snapshots[snapshots.length - 1];
-      if (!empty || !top || top === empty || !f.mask) return 0;
-      const cols = rawGray.cols;
-      const x0 = Math.max(0, f.rect.x);
-      const y0 = Math.max(0, f.rect.y);
-      const x1 = Math.min(cols, f.rect.x + f.rect.width);
-      const y1 = Math.min(rawGray.rows, f.rect.y + f.rect.height);
-      if (x1 <= x0 || y1 <= y0) return 0;
-      const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 4000)));
-      const mask = f.mask.data;
-      const cur = rawGray.data;
-      const before = top.data;
-      const ref = empty.data;
-      let n = 0;
-      let m = 0;
-      for (let y = y0; y < y1; y += step) {
-        const off = y * cols;
-        for (let x = x0; x < x1; x += step) {
-          if (!mask[off + x]) continue;
-          n++;
-          const hadMaterial = Math.abs(before[off + x] - ref[off + x]) > RAW_DIFF_THRESHOLD;
-          const nowEmpty = Math.abs(cur[off + x] - ref[off + x]) <= RAW_DIFF_THRESHOLD;
-          if (hadMaterial && nowEmpty) m++;
-        }
-      }
-      return n ? m / n : 0;
-    };
+    const vacatedFraction = (f: TipFind): number => statsOf(f).vacated;
     /** Under det här har ingenting lämnat platsen - då är det inte en pil som rört sig. */
     const VACATED_MIN_FRACTION = 0.1;
 
@@ -939,7 +879,7 @@ const STARTUP_GRACE_MS = 2000;
         // redan registrerad pil - loggen pekade då på fel pil.
         lastDiag = found.diag;
         lastAnalysis = `PIL registrerad (${found.how}, material ${Math.round(material * 100)} %, fanns före ${Math.round(prior * 100)} %, lämnat ${Math.round(vacated * 100)} %)`;
-        onDartDetectedRef.current(tip, seq);
+        onDartDetectedRef.current(tip, seq, { how: found.how, diag: found.diag });
       }
     };
 
@@ -1147,7 +1087,7 @@ const STARTUP_GRACE_MS = 2000;
         lastDiag = revealed!.diag;
         lastAnalysis = `DOLD PIL avslöjad vid uttagning (avstämt, ${revealed!.how})`;
         for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
-        onHiddenDartRevealedRef.current?.(tip, seq);
+        onHiddenDartRevealedRef.current?.(tip, seq, { how: revealed!.how, diag: revealed!.diag });
         return true;
       }
 
@@ -1328,7 +1268,7 @@ const STARTUP_GRACE_MS = 2000;
           dartSeqs.push(seq);
           dartsThisVisit++;
           lastDiag = found!.diag;
-          onHiddenDartRevealedRef.current?.(tip, seq);
+          onHiddenDartRevealedRef.current?.(tip, seq, { how: found!.how, diag: found!.diag });
         } else {
           // Osäkert. Säkraste antagandet är en ren uttagning - annars
           // riskerar vi att aldrig komma vidare mot tom tavla.

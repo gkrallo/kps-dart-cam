@@ -109,7 +109,28 @@ export interface MatchState {
   config: MatchConfig;
 }
 
-export type MatchAction = { t: 'T'; v: number; m: number } | { t: 'E' };
+/**
+ * Vad detektorn såg när den registrerade ett kast. Följer med kastet i
+ * kastlistan (så den överlever insättningar och omräkningar) och hamnar i
+ * rättningsloggen om kastet rättas - se utils/correctionLog.ts. Saknas för
+ * kast som matats in för hand. Motorn läser den aldrig.
+ */
+export interface DetectionMeta {
+  /** Fältet detektorn läste, som dartMath-etikett (S20, T5, DB, MISS ...). */
+  label: string;
+  /** Spetsens radie i mm. */
+  rMM: number;
+  /** Spetsens vinkel, 0° rakt upp, medurs. */
+  deg: number;
+  /** Vilken metod som valde spetsen (axel/tyngdpunkt, trimning). */
+  how: string;
+  /** ?debug-siffrorna (area, bbox, konfidens ...), om de fanns. */
+  diag?: string;
+  /** Kom kastet från en avslöjad dold pil? */
+  revealed?: boolean;
+}
+
+export type MatchAction = { t: 'T'; v: number; m: number; d?: DetectionMeta } | { t: 'E' };
 
 export interface Match {
   id: string;

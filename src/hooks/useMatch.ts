@@ -12,7 +12,8 @@ import {
   restoreMatch,
   type CreateMatchOptions,
 } from '../game/match';
-import type { Match, MatchState, Seg } from '../game/types';
+import type { DetectionMeta, Match, MatchState, Seg } from '../game/types';
+import { appendCorrection } from '../utils/correctionLog';
 
 const KEY = 'kps-dart-cam:match:v1';
 
@@ -104,10 +105,10 @@ export function useMatch() {
    * appen inte spela pil-ljud och läsa upp en poäng som inte räknas.
    */
   const throwSeg = useCallback(
-    (seg: Seg): { state: MatchState; accepted: boolean } | null => {
+    (seg: Seg, meta?: DetectionMeta): { state: MatchState; accepted: boolean } | null => {
       if (!ref.current) return null;
       const before = matchState(ref.current).log.length;
-      const st = throwDart(ref.current, seg);
+      const st = throwDart(ref.current, seg, meta);
       bump();
       return { state: st, accepted: st.log.length > before };
     },
@@ -127,9 +128,36 @@ export function useMatch() {
     bump();
   }, [bump]);
 
+  /**
+   * Loggar en rättning innan kastlistan ändras - efteråt finns inte det gamla
+   * värdet eller detektionsdatan kvar. Se utils/correctionLog.ts.
+   */
+  const logCorrection = (
+    m: Match,
+    actionIndex: number,
+    kind: 'edit' | 'delete',
+    to: Seg | null,
+    source: 'manual' | 'auto',
+  ) => {
+    const old = m.actions[actionIndex];
+    if (!old || old.t !== 'T') return;
+    if (to && old.v === to.v && old.m === to.m) return; // ingen ändring
+    appendCorrection({
+      at: Date.now(),
+      kind,
+      source,
+      matchId: m.id,
+      mode: m.config.mode,
+      detected: old.d ?? null,
+      from: { v: old.v, m: old.m },
+      to,
+    });
+  };
+
   const editThrow = useCallback(
-    (actionIndex: number, seg: Seg) => {
+    (actionIndex: number, seg: Seg, source: 'manual' | 'auto' = 'manual') => {
       if (!ref.current) return;
+      logCorrection(ref.current, actionIndex, 'edit', seg, source);
       replaceThrow(ref.current, actionIndex, seg);
       bump();
     },
@@ -139,6 +167,7 @@ export function useMatch() {
   const deleteThrow = useCallback(
     (actionIndex: number) => {
       if (!ref.current) return;
+      logCorrection(ref.current, actionIndex, 'delete', null, 'manual');
       removeThrow(ref.current, actionIndex);
       bump();
     },
@@ -146,13 +175,31 @@ export function useMatch() {
   );
 
   /** Returnerar true om kastet faktiskt kom in i kastlistan (turen var inte full). */
+  /**
+   * Sätter in ett kast som saknades. Med `meta` kommer det från detektorn
+   * (avslöjad dold pil) och loggas inte; utan `meta` matades det in för hand
+   * och är alltså en missad pil - det loggas.
+   */
   const insertMissingThrow = useCallback(
-    (actionIndex: number, seg: Seg): boolean => {
+    (actionIndex: number, seg: Seg, meta?: DetectionMeta): boolean => {
       if (!ref.current) return false;
       const before = ref.current.actions.length;
-      insertThrow(ref.current, actionIndex, seg);
+      insertThrow(ref.current, actionIndex, seg, meta);
+      const accepted = ref.current.actions.length > before;
+      if (accepted && !meta) {
+        appendCorrection({
+          at: Date.now(),
+          kind: 'missed',
+          source: 'manual',
+          matchId: ref.current.id,
+          mode: ref.current.config.mode,
+          detected: null,
+          from: null,
+          to: seg,
+        });
+      }
       bump();
-      return ref.current.actions.length > before;
+      return accepted;
     },
     [bump],
   );
