@@ -12,6 +12,12 @@ interface CameraFeedProps {
   onContainerResize?: (width: number, height: number) => void;
   onZoomCapability?: (cap: ZoomCapability) => void;
   zoomLevel?: number;
+  /**
+   * Räknare: varje ändring lägger på zoomen igen (se reapplyZoom). App ökar
+   * den när detektorn ser att hela bilden ändrats - då är tappad zoom den
+   * vanligaste orsaken, och den går att rätta utan att röra telefonen.
+   */
+  zoomNudge?: number;
   children?: React.ReactNode;
 }
 
@@ -29,6 +35,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   onContainerResize,
   onZoomCapability,
   zoomLevel = 1,
+  zoomNudge = 0,
   children,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -137,12 +144,22 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
     const min = caps.zoom.min ?? 1;
     const max = caps.zoom.max ?? 1;
     const target = Math.min(Math.max(zoomRef.current, min), max);
-    const nudge = target - (caps.zoom.step || 0.1) >= min ? target - (caps.zoom.step || 0.1) : target + (caps.zoom.step || 0.1);
+    // Ett tydligt annat värde först, sedan det rätta, med paus emellan.
+    // Uppmätt 2026-10-05: steg på 0,1 utan paus gjorde ingenting; 1,5 -> 2,1
+    // med 0,8 s emellan tog. Kameran behöver tid efter ett appbyte.
+    const nudge = Math.max(min, Math.min(max, target > min + 0.5 ? target - 0.5 : target + 0.5));
+    const wait = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
     track
       .applyConstraints({ advanced: [{ zoom: nudge } as any] })
+      .then(() => wait(800))
       .then(() => track.applyConstraints({ advanced: [{ zoom: target } as any] }))
       .catch((err) => console.warn('Kunde inte lägga på zoomen igen:', err));
   }, []);
+
+  // App ber om en ny zoom (detektorn såg att hela bilden ändrats).
+  useEffect(() => {
+    if (zoomNudge > 0) reapplyZoom();
+  }, [zoomNudge, reapplyZoom]);
 
   // Android Chrome PAUSAR videoelementet när appen går i bakgrunden (byte till
   // annan app, skärmen slocknar) och återupptar det INTE när man kommer
@@ -179,7 +196,9 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
       // Kameran kan ha återställts till 1x under tiden, se reapplyZoom.
       // Kort fördröjning: spåret behöver hinna starta om innan det tar emot
       // constraints (jfr frysningen vid applyConstraints för tidigt).
-      window.setTimeout(reapplyZoom, 600);
+      // Två försök: kameran är inte alltid redo efter första.
+      window.setTimeout(reapplyZoom, 800);
+      window.setTimeout(reapplyZoom, 3000);
       if (!lock || lock.released) void acquireLock();
     };
 

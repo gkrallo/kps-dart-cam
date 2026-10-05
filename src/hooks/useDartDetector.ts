@@ -1223,14 +1223,16 @@ const STARTUP_GRACE_MS = 2000;
         const nowMs = performance.now();
         if (hugeSince === 0) hugeSince = nowMs;
         if (dTop > frameArea * SCENE_CHANGE_FRACTION) {
-          if (!sceneChanged && nowMs - hugeSince >= HAND_PATIENCE_MS) {
+          const justFlagged = !sceneChanged && nowMs - hugeSince >= HAND_PATIENCE_MS;
+          if (justFlagged) {
             sceneChanged = true;
             onSceneChangedRef.current?.(true);
           }
           lastAnalysis = sceneChanged
             ? `BILDEN ÄNDRAD (${Math.round((dTop / frameArea) * 100)} % av bilden) - zoom, kamera eller ljus. Ingen analys förrän den är tillbaka eller kalibrerats om.`
             : `stor del av bilden ändrad (${Math.round((dTop / frameArea) * 100)} %) - väntar`;
-          logAnalysis(sceneChanged ? 'SCEN' : 'HAND', dTop, Infinity);
+          // En rad per övergång, inte per bildruta - annars dränks loggen.
+          if (justFlagged) logAnalysis('SCEN', dTop, Infinity);
           return 'skip';
         }
         if (nowMs - hugeSince < HAND_PATIENCE_MS) {
@@ -1461,6 +1463,23 @@ const STARTUP_GRACE_MS = 2000;
         }
       } else {
         isStabilizing = false;
+
+        // Bilden är lugn och lik referensen igen (zoomen kom tillbaka, den som
+        // stod framför linsen gick). Då når vi aldrig analyseChange, så
+        // varningen måste släppas här - annars låg den röda rutan kvar
+        // (uppmätt 2026-10-05).
+        // Lugn bild = inget främmande föremål kvar. Nollställ tålamodet, annars
+        // är det redan slut nästa gång en arm kommer in, och bilden med armen
+        // analyseras direkt (uppmätt 2026-10-05: hugeSince låg kvar efter ett
+        // appbyte som rättat sig själv).
+        hugeSince = 0;
+        if (sceneChanged) {
+          sceneChanged = false;
+          hugeSince = 0;
+          lastAnalysis = 'bilden tillbaka som vid kalibreringen';
+          logAnalysis('SCEN-SLUT', 0, Infinity);
+          onSceneChangedRef.current?.(false);
+        }
 
         // Tavlan tömd? Jämför mot den tomma referensbilden. Är den nästan
         // identisk igen har någon dragit ur pilarna -> spelarbyte.

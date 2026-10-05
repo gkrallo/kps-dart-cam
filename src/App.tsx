@@ -358,9 +358,14 @@ export default function App() {
    * är tillbaka; säg till högt, för spelaren ser inte skärmen.
    */
   const [sceneChanged, setSceneChanged] = useState(false);
+  /** Ökas för att be CameraFeed lägga på zoomen igen. */
+  const [zoomNudge, setZoomNudge] = useState(0);
   const handleSceneChanged = useCallback((changed: boolean) => {
     setSceneChanged(changed);
     if (changed) {
+      // Vanligaste orsaken är tappad zoom efter ett appbyte - försök rätta
+      // den först. Kommer bilden tillbaka släpper detektorn varningen själv.
+      setZoomNudge((n) => n + 1);
       audioEngine.speak('Kameran ser en annan bild än vid kalibreringen. Kontrollera telefonen och kalibrera om.');
     }
   }, []);
@@ -584,6 +589,7 @@ export default function App() {
             onContainerResize={handleContainerResize}
             onZoomCapability={setZoomCapability}
             zoomLevel={zoomLevel}
+            zoomNudge={zoomNudge}
           >
             {isLoaded && !isCalibrated && (
               <CalibrationOverlay
