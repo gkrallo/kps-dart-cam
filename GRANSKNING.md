@@ -607,3 +607,11 @@ några sekunder; använd den innan ett kalibreringsfel påstås.
 fortfarande inte setts (gick inte att framkalla); osäkerhetsflagga för pilar
 under en millimeter från en tråd; och att avslöjade pilar ur en klunga ska
 kräva samma säkerhet som ett vanligt kast.
+
+**Byggt efter passet samma kväll** (`3d500aa`): rättningsloggen. Varje kast
+från detektorn bär med sig vad den såg (`MatchAction.d`), och varje
+rättning, borttagning eller inlagd missad pil skrivs till localStorage med
+både det avlästa och det rättade värdet. `node tools/corrections.mjs`
+hämtar loggen över USB. Pixelmåtten för ny pil / hål / skakad pil är
+utbrutna till `utils/blobPixels.ts` med tester. Inget av detta ändrar
+avläsningen.

@@ -123,6 +123,8 @@ src/
     shadowTest.ts             Skiljer "pil" från "samma yta, annat ljus" (skugga/reflex)
     calibration.ts            Sparad kalibrering (localStorage) + rotationsankare
     ringRefine.ts             Finjustering av kalibreringen mot ringkanterna i bilden (många strålar + LM)
+    blobPixels.ts             Material nu / fanns före / lämnat tomt för en blobb: ny pil, hål eller skakad pil
+    correctionLog.ts          Rättningsloggen i localStorage: vad detektorn såg och vad det borde ha varit
     syntheticBoard.ts         Renderar exakt tavla + pil genom en känd kamera (test/felsökning)
     audioEngine.ts            Ljudeffekt (Web Audio) + svensk TTS
     __tests__/                Vitest
@@ -130,7 +132,8 @@ src/
 scripts/copy-opencv.mjs       Kopierar opencv.js från node_modules till public/
 scripts/measure-rings.ts      Mäter kalibreringens radiella fel mot en riktig bildruta (npx vite-node), se ringRefine.ts
 scripts/tip-profile.ts        Felsöker EN pil mot ett fotopar: blobb, axel, gråvärdesprofil vid spetsen, skuggtrimning
-tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md. history.mjs läser konsolbufferten i efterhand
+scripts/check-cal.ts          Rotation och sektorlägen för en sparad kalibrering mot en riktig bildruta
+tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md. history.mjs läser konsolbufferten i efterhand, corrections.mjs hämtar rättningsloggen
 public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
 .github/workflows/deploy.yml  Test → bygge → deploy till Pages
 AGENT.md                      Arkitektur + lista över kända begränsningar
@@ -148,7 +151,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 309 tester
+npm test         # 322 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -435,7 +438,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 309 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen och regelmotorn — 322 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
