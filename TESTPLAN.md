@@ -1,5 +1,13 @@
 # Testplan vid tavlan
 
+> **Körd igen 2026-10-05.** Alla punkter i bannern nedan är körda utom
+> självrättningen (gick inte att framkalla). Resultat och rättningar i
+> `GRANSKNING.md` avsnitt 10. **Nästa pass:** ett riktigt spel (Farfar) med
+> flera spelare och loggen igång, utan särskilda tester - det är där
+> resterande fel syns. Om Pages-bygget ligger efter: kör lokalt med
+> `adb reverse tcp:5173 tcp:5173` + `npx vite preview --port 5173` och
+> navigera fliken dit (ny origin = kalibrera med Auto).
+
 > **Körd 2026-10-04 (första sessionen med Winmau Blade X inomhus).** Del A–D
 > godkända: 12 av 12 kastade pilar rätt, bull på millimetern (DB 1 mm, grön 25
 > vid 19/3-tråden 0,5 mm från tråden), snabba kast (3 på 2,3 s) alla rätt,

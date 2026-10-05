@@ -546,3 +546,64 @@ spärren "nyss glömd pil" stoppade en felaktig dold pil, och den nya
 **Lärdom för nästa session:** riktigt, snabbt spel med flera personer vid
 tavlan är en helt annan miljö än ensamkastning med paus. Allt som bygger på
 "stilla bild" måste tåla att någon står i bild i halvminuter.
+
+---
+
+## 10. Testpass 2026-10-05 (Opus 5.5)
+
+Samma uppställning, ny modell i Claude Code. Allt styrt från datorn; Kristian
+fjärrstyr telefonen via Samsung Flow från en surfplatta.
+
+| Test | Resultat |
+|---|---|
+| Rigg, rätt bygge, en flik | OK |
+| Knapparna i kalibreringsvyn | OK, layouträttningen från 10-04 håller |
+| Auto + Finjustera | Rotation 0,25° fel (konfidens 0,95), sektorgränserna på rätt grad längs trippeln |
+| Två handplacerade pilar 14 mm isär | Två kast, avståndet rätt på 0,5 mm |
+| Två pilar 7–10 mm isär med piporna mot varandra | Pil två missad: pil ett knuffades och de blev en form. Fysisk gräns |
+| Uttag av den missade | Hålet avfärdat korrekt |
+| T15 och T6 handplacerade mitt i | 1–3 mm från mitten; skuggtrimningen flyttade T6 från 100 till 104 mm |
+| Person framför tavlan efter turslut | Nästa spelares tur orörd |
+| Tre snabba kast nära varandra | Inga extra pilar; två riktiga missar över pil ett:s vinge togs först för vibration (rättat) |
+| Dold pil vid uttag | En oregistrerad miss avslöjades och sattes in rätt |
+| Varning "bara N av 3 avlästa" | Fungerar, med Lägg till |
+| Tre pilar i en tät klunga utanför D20 | 1 av 3 läst, ingen gissad poäng. Fysisk gräns |
+| Appbyte via Samsung Flow | Zoomen återställs av sig själv efter rättningen |
+
+**Rättat under passet** (`dec9f38`, `541a78a`):
+
+- **Appbyte tappade hårdvaruzoomen** medan `getSettings().zoom` fortfarande
+  sa 2,04. Hela bilden ändrades, kalibreringen blev fel utan att något sa
+  till, och en hel tur lästes i 1× med fel kalibrering. Nu läggs zoomen på
+  igen efter appbyte (1,5 → 2,1 med 0,8 s paus; 0,1-steg utan paus gjorde
+  ingenting), och automatiskt så fort detektorn ser en helbildsändring.
+- **Helbildsändring tolkades som ljusskifte** efter 8 s och bokförde en pil
+  som uttagen. Över 40 % ändrad bild rör nu aldrig pilarna; efter 8 s röd
+  ruta + uppläsning, och den släpper när bilden är tillbaka.
+- **"Pil som rört sig" tog två riktiga missar** vars vingar låg över en
+  registrerad pils vinge (51–52 % "fanns före"). Spärren kräver nu också att
+  minst 10 % av blobben lämnats tom (`vacatedFraction`): en pil som rör sig
+  lämnar yta efter sig, en ny pil ovanpå en gammal gör det inte. Riktiga kast
+  efteråt loggade "lämnat 0 %".
+- **Finjustera-meddelandet** räknade trådens 0,6 mm som fel.
+- **Väntetimern för främmande föremål** låg kvar efter ett appbyte som rättat
+  sig självt, så tålamodet var slut nästa gång en arm kom in.
+
+**Fysiska gränser, inte buggar:** pilar vars pipor ligger mot varandra
+(< ~10 mm och vidrörande), och klungor där vingarna överlappar helt. Appen
+avstår i båda fallen i stället för att gissa, varnar vid turslut, och
+dold-pil-funktionen plockar upp en del vid uttagningen. Värt att veta: i
+klungan läste den avslöjade pilen D20 på 168 mm där sanningen var en miss
+strax utanför - en delvis skymd pil är inte pålitlig ens när den syns, och
+spärren som stoppade insättningen gjorde rätt av fel skäl. Rör den inte
+utan att först göra den avslöjade pilens avläsning säkrare.
+
+**Fel som jag själv gjorde under passet:** räknade två gånger med att
+sektor 15 ligger på 126–144° (den ligger på 117–135°) och påstod ett
+kalibreringsfel som inte fanns. `scripts/check-cal.ts` visade det på
+några sekunder; använd den innan ett kalibreringsfel påstås.
+
+**Kvar till nästa pass:** självrättningen av en ensam kvarvarande pil har
+fortfarande inte setts (gick inte att framkalla); osäkerhetsflagga för pilar
+under en millimeter från en tråd; och att avslöjade pilar ur en klunga ska
+kräva samma säkerhet som ett vanligt kast.
