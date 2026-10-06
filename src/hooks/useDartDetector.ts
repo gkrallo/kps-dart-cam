@@ -1221,7 +1221,14 @@ const STARTUP_GRACE_MS = 2000;
       // Går bilden NÄRMARE nivån under toppen än toppen själv - något drogs
       // ut, inte till. En pil som just kastats gör tvärtom: går längre bort
       // från toppen (mer material), aldrig närmare ett äldre snapshot.
-      const removalLikely = hasBelow && dBase < dTop && !censusSawAllDarts;
+      // Sa avstämningen att formen mot tom tavla är för stor för en pil, sitter
+      // två pilar ihop - alltså MER material, aldrig ett uttag. Uppmätt
+      // 2026-10-06: pil 2 landade intill pil 1, avstämningen avstod korrekt,
+      // men pixelheuristiken nedan tolkade det som ett uttag och glömde pil 1;
+      // nästa analys registrerade pil 1 en gång till och pil 3 blev oläst.
+      const censusSaysMerged =
+        verdict.kind === 'osäker' && verdict.why.includes('troligen två pilar ihop');
+      const removalLikely = hasBelow && dBase < dTop && !censusSawAllDarts && !censusSaysMerged;
 
       if (removalLikely && dBase < CLEAR_MATCH) {
         // Ren uttagning: toppilen drogs ut, ingenting nytt syns. En nivå ner.
