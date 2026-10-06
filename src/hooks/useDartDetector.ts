@@ -80,6 +80,12 @@ export const useDartDetector = (
    * när bilden återgått. Under tiden analyseras ingenting.
    */
   onSceneChanged?: (changed: boolean) => void,
+  /**
+   * En pil försvann inom FALL_OUT_MS efter att den registrerats: den föll ur
+   * tavlan. `seq` är pilens löpnummer (samma som i onDartDetected). App
+   * sätter kastet till noll; turen fortsätter.
+   */
+  onDartFellOut?: (seq: number) => void,
   /** Loggar utförligt till konsolen. Styrs av ?debug i URL:en. */
   debug = false,
 ) => {
@@ -93,6 +99,7 @@ export const useDartDetector = (
   const onDartRemovedRef = useRef(onDartRemoved);
   const onDartCorrectedRef = useRef(onDartCorrected);
   const onSceneChangedRef = useRef(onSceneChanged);
+  const onDartFellOutRef = useRef(onDartFellOut);
   const motionThresholdRef = useRef(motionThreshold);
   const debugRef = useRef(debug);
   useEffect(() => {
@@ -103,6 +110,7 @@ export const useDartDetector = (
     onDartRemovedRef.current = onDartRemoved;
     onDartCorrectedRef.current = onDartCorrected;
     onSceneChangedRef.current = onSceneChanged;
+    onDartFellOutRef.current = onDartFellOut;
     motionThresholdRef.current = motionThreshold;
     debugRef.current = debug;
   });
@@ -277,6 +285,20 @@ export const useDartDetector = (
      * listan förskjuts när pilar glöms, löpnumret gör det inte.
      */
     let dartSeqs: number[] = [];
+    /** När varje pil registrerades (performance.now), samma ordning som rawTips. */
+    let dartTimes: number[] = [];
+    /**
+     * Ingen hinner gå fram och dra ut en pil på 2,5 s - dagens snabbaste uttag
+     * var 4,3 s efter kastet (2026-10-06). En pil som försvinner fortare än så
+     * föll ur; samma kväll föll en S7 ur efter 1,0 s, tavlan blev tom och
+     * appen bytte spelare efter en enda pil.
+     */
+    const FALL_OUT_MS = 2500;
+    /**
+     * Tavlan blev tom för att en pil föll ur, inte för att pilarna drogs ut.
+     * Spärrar tömd-signalen tills nytt material syns.
+     */
+    let fellOutLeftBoardEmpty = false;
     let nextDartSeq = 0;
     /**
      * Pilar som avstämningen nyss glömt (uppmätt 2026-10-04: två pilar
@@ -311,7 +333,14 @@ export const useDartDetector = (
       if (rawTips[index]) recentlyForgotten.push({ tip: rawTips[index], at: performance.now() });
       rawTips.splice(index, 1);
       dartAreas.splice(index, 1);
+      const regAt = dartTimes[index];
+      const seq = dartSeqs[index];
+      if (regAt !== undefined && seq !== undefined && performance.now() - regAt < FALL_OUT_MS) {
+        onDartFellOutRef.current?.(seq);
+        if (rawTips.length === 1) fellOutLeftBoardEmpty = true;
+      }
       dartSeqs.splice(index, 1);
+      dartTimes.splice(index, 1);
       detectedDartsRef.current.splice(index, 1);
     };
 
@@ -904,6 +933,10 @@ const STARTUP_GRACE_MS = 2000;
         rawTips.push(found.tip);
         dartAreas.push(found.area);
         dartSeqs.push(seq);
+
+        dartTimes.push(performance.now());
+
+        fellOutLeftBoardEmpty = false;
         dartsThisVisit++;
         pushSnapshot();
         // Loggraden ska visa den VALDA kandidatens siffror. Förut stod där
@@ -1114,6 +1147,10 @@ const STARTUP_GRACE_MS = 2000;
         rawTips.push(revealed!.tip);
         dartAreas.push(revealed!.area);
         dartSeqs.push(seq);
+
+        dartTimes.push(performance.now());
+
+        fellOutLeftBoardEmpty = false;
         dartsThisVisit++;
         syncSnapshots();
         lastDiag = revealed!.diag;
@@ -1305,6 +1342,10 @@ const STARTUP_GRACE_MS = 2000;
           rawTips.push(found!.tip);
           dartAreas.push(found!.area);
           dartSeqs.push(seq);
+
+          dartTimes.push(performance.now());
+
+          fellOutLeftBoardEmpty = false;
           dartsThisVisit++;
           lastDiag = found!.diag;
           onHiddenDartRevealedRef.current?.(tip, seq, { how: found!.how, diag: found!.diag });
@@ -1486,6 +1527,9 @@ const STARTUP_GRACE_MS = 2000;
             materialSince = 0;
           } else if (emptyPx >= MATERIAL_PX) {
             if (materialSince === 0) materialSince = now;
+            // Nytt material efter ett urfall: en pil sitter i tavlan igen (även en
+            // som inte gick att läsa), så en senare tömning är ett riktigt uttag.
+            fellOutLeftBoardEmpty = false;
           } else if (emptyPx < CLEAR_PX) {
             const heldMs = materialSince === 0 ? 0 : now - materialSince;
             // Kravet på uthållighet finns för att en hand som sträcker sig in
@@ -1498,11 +1542,15 @@ const STARTUP_GRACE_MS = 2000;
             const somethingWasThere =
               dartsThisCycle > 0 || dartsThisVisit > 0 || heldMs >= MATERIAL_HOLD_MS;
             materialSince = 0;
-            if (somethingWasThere) {
+            if (fellOutLeftBoardEmpty) {
+              // Tavlan är tom för att en pil föll ur - turen pågår. Vänta på
+              // nästa pil (som nollställer flaggan) innan tömning räknas.
+            } else if (somethingWasThere) {
               detectedDartsRef.current = [];
               rawTips = [];
               dartAreas = [];
               dartSeqs = [];
+              dartTimes = [];
               recentlyForgotten = [];
               lastEmptyDiffPx = -1;
               resetSnapshots();

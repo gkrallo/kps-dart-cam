@@ -403,6 +403,20 @@ export default function App() {
     }
   }, []);
 
+  /**
+   * En pil föll ur tavlan strax efter att den registrerats. Enligt reglerna
+   * ger den noll; turen fortsätter. Loggas som automatisk rättning.
+   */
+  const handleDartFellOut = useCallback((seq: number) => {
+    if (!match) return;
+    const ai = visitActionsRef.current.get(seq);
+    if (ai === undefined) return;
+    editThrow(ai, { v: 0, m: 1 }, 'auto');
+    audioEngine.speak('Pilen föll ur, ingen poäng.');
+    setLastScoredDartLabel('Föll ur: 0');
+    window.setTimeout(() => setLastScoredDartLabel(null), 3000);
+  }, [match, editThrow]);
+
   const handleDebugState = useCallback((info: DetectorDebug) => {
     setDetectorState(info.state);
     setDebugInfo(info);
@@ -425,6 +439,7 @@ export default function App() {
     handleDartRemoved,
     handleDartCorrected,
     handleSceneChanged,
+    handleDartFellOut,
     debugMode,
   );
 
