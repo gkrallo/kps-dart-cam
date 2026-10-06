@@ -287,9 +287,14 @@ export const useDartDetector = (
      */
     let recentlyForgotten: { tip: Point; at: number }[] = [];
     const RECENTLY_FORGOTTEN_MS = 20000;
+    // 20 px (~9 mm), var 60. Uppmätt i spel 2026-10-06: två riktiga, skymda
+    // pilar 32 och 36 px från en nyss uttagen spärrades. Felet spärren byggdes
+    // mot (sammanslagen form bokförd som uttag) stoppas numera tidigare, av
+    // storleksspärren och av att en sammanslagen form aldrig tolkas som uttag.
+    const RECENTLY_FORGOTTEN_PX = 20;
     const nearRecentlyForgotten = (rawTip: Point, now: number) =>
       recentlyForgotten.some(
-        (f) => now - f.at < RECENTLY_FORGOTTEN_MS && Math.hypot(f.tip.x - rawTip.x, f.tip.y - rawTip.y) < 60,
+        (f) => now - f.at < RECENTLY_FORGOTTEN_MS && Math.hypot(f.tip.x - rawTip.x, f.tip.y - rawTip.y) < RECENTLY_FORGOTTEN_PX,
       );
     /** Pilar registrerade sedan tavlan senast var tom, oavsett vad som sedan glömts. */
     let dartsThisVisit = 0;
