@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   chooseDartTip,
   MAX_CENTROID_ELONGATION,
+  MAX_CENTROID_LENGTH_PX,
   MIN_AXIS_CONFIDENCE,
   type DartAxisResult,
   type TipChoiceInput,
@@ -130,6 +131,14 @@ describe('chooseDartTip - gränserna', () => {
       input({ axis: axisWith(MIN_AXIS_CONFIDENCE + 0.01, 4), elongation: 4 }),
     );
     expect(over.how).toContain('axel');
+  });
+
+  it('tyngdpunkten används inte för en lång blobb, även om den är bred (2026-10-06)', () => {
+    // 219x108 px, elong 2,2: lästes T6 på 103 mm, sanningen S15 nära bullen.
+    const lang = chooseDartTip(input({ axis: null, elongation: 2.2, lengthPx: 219 }));
+    expect(lang.tip).toBeNull();
+    const kort = chooseDartTip(input({ axis: null, elongation: 2.2, lengthPx: MAX_CENTROID_LENGTH_PX - 10 }));
+    expect(kort.tip).not.toBeNull();
   });
 
   it('tål en tom kontur', () => {

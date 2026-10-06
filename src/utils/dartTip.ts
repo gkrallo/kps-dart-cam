@@ -175,6 +175,12 @@ export interface TipChoiceInput {
   lightingDecided: boolean;
   /** Skuggtestets motivering, för loggen. */
   lightingReason?: string;
+  /**
+   * Blobbens längsta mått (minAreaRect, rå pixlar). Används för att neka
+   * tyngdpunkten på långa blobbar, se MAX_CENTROID_LENGTH_PX. Utelämnas den
+   * görs ingen sådan kontroll.
+   */
+  lengthPx?: number;
 }
 
 export interface TipChoice {
@@ -215,6 +221,20 @@ export const MIN_AXIS_CONFIDENCE = 0.33;
 export const MAX_CENTROID_ELONGATION = 3;
 
 /**
+ * Tyngdpunkten får bara användas på KORTA blobbar - en pil som pekar mot
+ * linsen syns som en klump, inte som en stav.
+ *
+ * Uppmätt i spel 2026-10-06: en blobb på 219x108 px (två hopslagna
+ * fragment, minAreaRect-elong bara 2,2 eftersom den var bred) gick
+ * tyngdpunktsvägen och lästes T6 på 103 mm där sanningen var S15 nära
+ * bullen - åtta centimeter fel. 150 px är ~65 mm vid tavlans skala (2,2-2,5
+ * px/mm): längre än så är en pil sedd från sidan, och då sitter tyngdpunkten
+ * mitt på kroppen. Hellre avstå - turslutet varnar och uttagningen hittar
+ * ofta pilen.
+ */
+export const MAX_CENTROID_LENGTH_PX = 150;
+
+/**
  * Avgör vilken spets vi ska tro på - eller om vi ska avstå helt.
  *
  * Att avstå är ett fullgott svar: appen varnar vid turslut när färre pilar
@@ -222,7 +242,7 @@ export const MAX_CENTROID_ELONGATION = 3;
  * än att gissa fram en poäng som tyst blir fel.
  */
 export function chooseDartTip(input: TipChoiceInput): TipChoice {
-  const { points, elongation, axis, isLightingOnly, lightingDecided, lightingReason } = input;
+  const { points, elongation, axis, isLightingOnly, lightingDecided, lightingReason, lengthPx } = input;
 
   if (isLightingOnly) {
     return { tip: null, how: lightingReason ?? 'bara en ljusändring, ingen pil' };
@@ -247,7 +267,8 @@ export function chooseDartTip(input: TipChoiceInput): TipChoice {
   // pilen pekar mot linsen (uppmätt: tyngdpunkten läser radien inom ~1 mm).
   // Kravet på `lightingDecided` för de riktigt runda: en rund fläck som vi
   // inte kunde mäta på är för svag grund för ett kast.
-  if (elongation <= MAX_CENTROID_ELONGATION && (elongation >= 2.5 || lightingDecided)) {
+  const shortEnough = lengthPx === undefined || lengthPx <= MAX_CENTROID_LENGTH_PX;
+  if (shortEnough && elongation <= MAX_CENTROID_ELONGATION && (elongation >= 2.5 || lightingDecided)) {
     if (points.length === 0) return { tip: null, how: 'inga konturpunkter' };
     let mx = 0;
     let my = 0;
@@ -327,11 +348,13 @@ export function trimShadowAtTip(
   sample: (x: number, y: number) => GreyPair | null,
   opts: ShadowTrimOptions = {},
 ): ShadowTrimResult {
-  // 16 px: skuggan mätte 12-15 px. Stålspetsen över gräddvitt fält ser ut som
-  // skugga för testet (måttligt mörkare), så trimningen fortsätter in i den;
-  // taket begränsar övertrimningen till ~1 mm. Uppmätt 2026-10-04: taket 20
-  // nåddes i tre av fem registreringar.
-  const maxPx = opts.maxPx ?? 16;
+  // 6 px (~2,7 mm). Var 20, sedan 16. Uppmätt i spel 2026-10-06: över ljusa
+  // fält ser stålspetsen ut som skugga, så trimningen fortsatte in i den - en
+  // S15 på 29 mm flyttades 10 px till S10 (nära bullen byter några mm
+  // sektor), och en T18 från 102 till 107 mm. 6 px tar fortfarande det mesta
+  // av skuggan där den finns (T15 98,5 -> ~101 mm, inne i trippeln) men kan
+  // aldrig flytta spetsen mer än ~3 mm.
+  const maxPx = opts.maxPx ?? 6;
   const minDarker = opts.minDarker ?? 6;
   const maxDarker = opts.maxDarker ?? 45;
   const n = Math.hypot(axisTowardTip.x, axisTowardTip.y) || 1;

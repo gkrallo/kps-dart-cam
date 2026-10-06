@@ -711,6 +711,7 @@ const STARTUP_GRACE_MS = 2000;
             isLightingOnly: lighting.isLightingOnly,
             lightingDecided: lighting.decided,
             lightingReason: lighting.reason,
+            lengthPx: long,
           });
           tipRaw = choice.tip;
           how = choice.how;

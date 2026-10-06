@@ -167,6 +167,8 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const res = throwSeg(segFromDartScore(scoreObj), detectionMeta(pt, scoreObj.label, info));
     dartsSinceClearRef.current += 1;
+    // En ny pil betyder en ny tur: en tidigare "Avsluta tur" gäller inte längre.
+    manualEndRef.current = false;
     if (res?.accepted) {
       const last = res.state.log[res.state.log.length - 1];
       if (last) visitActionsRef.current.set(seq, last.ai);
@@ -224,6 +226,17 @@ export default function App() {
     }
   }, [throwSeg]);
 
+  /**
+   * Turen avslutades med knappen "Avsluta tur" medan pilarna satt kvar. Då
+   * ska tömningen av tavlan efteråt INTE avsluta en tur till - det tog nästa
+   * spelares tur med noll pilar (uppmätt 2026-10-06: två E i rad i kastlistan).
+   */
+  const manualEndRef = useRef(false);
+  const handleManualFinish = useCallback(() => {
+    manualEndRef.current = true;
+    finishTurn();
+  }, [finishTurn]);
+
   const handleBoardCleared = useCallback(() => {
     const readThisVisit = dartsSinceClearRef.current;
     dartsSinceClearRef.current = 0;
@@ -237,6 +250,13 @@ export default function App() {
     const v = st.view;
 
     if (st.finished) return;
+
+    // Turen är redan avslutad för hand: tömningen hör till den turen, inte
+    // till nästa spelares.
+    if (manualEndRef.current) {
+      manualEndRef.current = false;
+      return;
+    }
 
     if (engine.hasEndTurn) {
       // 301/501: turen avslutas när tavlan töms.
@@ -741,7 +761,7 @@ export default function App() {
         match={state}
         hasEndTurn={hasEndTurn}
         onUndo={undoLast}
-        onFinishTurn={finishTurn}
+        onFinishTurn={handleManualFinish}
         onEditThrow={editThrow}
         onDeleteThrow={deleteThrow}
         // Bara öppna inställningarna. Matchen raderas först när en ny startas

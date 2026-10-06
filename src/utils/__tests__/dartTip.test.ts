@@ -246,8 +246,8 @@ describe('trimShadowAtTip - skuggan vid spetsen', () => {
 
   it('drar tillbaka spetsen förbi skuggan till första ljusa pilpixeln', () => {
     const r = trimShadowAtTip(tip, axis, sample);
-    expect(r.trimmedPx).toBe(8); // s = 0..-7 är skugga/neutral, -8 är +18 ljusare
-    expect(r.tip.x).toBeCloseTo(92, 5);
+    expect(r.trimmedPx).toBe(6); // skugga/neutral i 8 px, men taket är 6
+    expect(r.tip.x).toBeCloseTo(94, 5);
   });
 
   it('rör inte en pil som är mörk ända ut i spetsen', () => {
@@ -262,6 +262,6 @@ describe('trimShadowAtTip - skuggan vid spetsen', () => {
 
   it('trimmar aldrig mer än taket', () => {
     const r = trimShadowAtTip(tip, axis, () => ({ cur: 180, ref: 200 }));
-    expect(r.trimmedPx).toBe(16);
+    expect(r.trimmedPx).toBe(6);
   });
 });
