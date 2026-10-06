@@ -1,5 +1,15 @@
 # Testplan vid tavlan
 
+> **Hel 501-match 2026-10-06** (`GRANSKNING.md` avsnitt 11): 64 avläsningar,
+> 5 rättade, varav 3 gränsfall under 1 mm. Nio rättningar gjordes under
+> passet. **Nästa pass**, ett vanligt spel med `?debug&mask`. Kontrollera:
+> (1) att den sparade kalibreringen kontrolleras av sig själv vid start
+> ("kontrollerad mot tavlan"); (2) osäkerhetsflaggan: "15 – eller 10" hörs
+> för pilar på tråden, och snabbvalet i rättningsvyn fungerar; säg till om
+> den pratar för ofta; (3) en pil som faller ur ger 0 och turen fortsätter;
+> (4) när något blir fel: kör `node tools/grab.mjs <etikett>` innan pilarna
+> rörs. Den sparar nu detektorns referensbilder, så felet kan köras om.
+
 > **Körd igen 2026-10-05.** Alla punkter i bannern nedan är körda utom
 > självrättningen (gick inte att framkalla). Resultat och rättningar i
 > `GRANSKNING.md` avsnitt 10. **Nästa pass:** ett riktigt spel (Farfar) med

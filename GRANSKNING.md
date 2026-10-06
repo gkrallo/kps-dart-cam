@@ -615,3 +615,78 @@ både det avlästa och det rättade värdet. `node tools/corrections.mjs`
 hämtar loggen över USB. Pixelmåtten för ny pil / hål / skakad pil är
 utbrutna till `utils/blobPixels.ts` med tester. Inget av detta ändrar
 avläsningen.
+
+## 11. Testpass 2026-10-06: en hel 501-match
+
+Kristian kastade för två spelare, ensam, en hel 501-match (tur 12 nåddes)
+och sa facit när appen läste fel. Rättningar byggdes mellan turerna.
+Kalibreringen gjordes bara med Auto, i den förenklade vyn (`e98bd91`), och
+satt på första försöket: rotationen mättes efteråt till -0,25° med
+konfidens 0,99.
+
+**Siffrorna ur telefonen** (`capture/2026-10-06/`, gitignorerad): 64
+avläsningar från detektorn, varav 5 rättade för hand. Dessutom några pilar
+som inte lästes alls vid kastet; flera av dem hittades när den
+framförvarande drogs ut. De fem rättningarna:
+
+| Avläst | Sanning | Orsak |
+|---|---|---|
+| T6 på 103 mm | S15 nära bullen | Tyngdpunkt på en lång, bred blobb (219×108 px) |
+| S16 vid 225,8° | S7 | 0,85 mm från tråden |
+| MISS på 179 mm | S20 | Bara vingen syntes, pilen skymd |
+| S15 vid 117,3° | S10 | 0,45 mm från tråden |
+| S14 på 98,7 mm / 296,7° | T9 | Hörnet: 0,35 mm från både trippelringen och tråden |
+
+Tre av fem är alltså gränsfall under en millimeter, med en kalibrering som
+samtidigt var rätt på en kvarts grad. Det är precisionsgränsen för en
+kamera, inte något att kalibrera bort.
+
+**Rättat under passet:**
+
+- **Skuggtrimningen flyttade pilar över gränser** (`cea2325`, `e3b4e1b`):
+  10 px trimning gjorde S15 nära bullen till S10 och T18 till 107 mm, och en
+  pil som pekade UTÅT trimmades från T11 till S11. Taket är nu 6 px, och
+  trimningen körs bara när pilen pekar inåt (inom 30°), där skuggan faller
+  vid spetsen.
+- **Tyngdpunkten på en lång blobb** gav T6 för S15. Nekas nu över 150 px.
+- **Dubbelt turavslut:** "Avsluta tur" plus tom tavla tog nästa spelares
+  tur med noll pilar. En manuellt avslutad tur avslutas inte igen.
+- **Reservregeln "uttag med rest" läste nya pilar som uttag**, tre gånger.
+  Den gamla pilen glömdes och registrerades sedan som ett nytt kast (19, 13,
+  19 där sanningen var 19, 3, 13). Grenen är avstängd (`ffa36e1`), och
+  avstämningen säger först till om formen troligen är två pilar ihop
+  (`ca7631c`).
+- **Tom-tavla-referensen skrevs över** med två oregistrerade pilar när en
+  avvisad blobb absorberades. Nivå 0 rörs inte längre medan något sitter i
+  tavlan.
+- **Spärren mot nyss glömda pilar** (60 px) blockerade riktiga dolda pilar
+  32–36 px bort. Nu 20 px.
+- **Bara vingen synlig** lästes MISS på 179 mm. En kompakt klump utanför
+  tavlan förkastas nu.
+- **En pil som föll ur** (S7, efter 1,0 s) tömde tavlan och bytte spelare
+  med poängen kvar. Försvinner en pil inom 2,5 s blir kastet 0 och turen
+  fortsätter. **Otestad:** ingen pil föll ur efter rättningen.
+
+**Byggt efter passet samma kväll:**
+
+- **Osäkerhetsflagga** (`cb19af9`). Ligger spetsen ≤ 1,0 mm från en tråd
+  eller ringkant läses grannfältet upp ("15 – eller 10", vid hörn "nära
+  gränsen"), pilen visas gul med ? och rättningsvyn har grannfälten som
+  snabbval. Mätt på kvällens data flaggas 10 av 64, och alla tre gränsfel
+  finns bland dem. Flaggan ändrar inte vilken poäng som räknas.
+- **Återställd kalibrering kontrolleras nu faktiskt** (`610b030`). Kontrollen
+  mot tavlan (sektorer och ringkanter) väntade på att videon skulle få
+  storlek, men effekten kördes aldrig igen. Meddelandet låg kvar på
+  telefonen i kväll utan att något hände.
+- **grab.mjs sparar detektorns indata** (`a67d90c`) för de tre senaste
+  analyserna: rå gråskala, toppen av stacken och tom tavla. Kollisionsfallen
+  i kväll gick inte att köra om, eftersom bara bildrutan efteråt fanns.
+
+**Kvar, i den ordningen:**
+
+1. Kollisionsfallet: en knuffad gammal pil och en ny pil blir en form, och
+   spetsen hamnar på den gamlas spets. Kör `node tools/grab.mjs` direkt
+   nästa gång det händer.
+2. Utfallet "pil föll ur" i spel.
+3. Om flaggan pratar för mycket. 1 av 6 kast är mycket om de flesta ändå
+   blir rätt.
