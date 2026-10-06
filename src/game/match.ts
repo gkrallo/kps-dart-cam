@@ -10,6 +10,7 @@ import type {
 } from './types';
 import { x01Engine } from './x01';
 import { farfarEngine } from './farfar';
+import { segFromLabel } from './segments';
 
 /**
  * En match = inställningar + en lista med kast. Ställningen sparas aldrig, den
@@ -79,6 +80,9 @@ function compute(match: Match): MatchState {
           round,
           dartNo,
           dart: { v: a.v, m: a.m },
+          ...(a.d?.alt?.length
+            ? { alt: a.d.alt.map(segFromLabel).filter((s): s is Seg => s !== null) }
+            : {}),
         });
       }
     } else if (a.t === 'E') {

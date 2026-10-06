@@ -66,6 +66,11 @@ export interface ThrowLogEntry {
   round: number;
   dartNo: number;
   dart: Seg;
+  /**
+   * Avläsningen satt nära en gräns: de troliga grannfälten, närmast först.
+   * Hämtas ur kastets DetectionMeta och försvinner när kastet rättas.
+   */
+  alt?: Seg[];
 }
 
 export interface MatchView {
@@ -128,6 +133,11 @@ export interface DetectionMeta {
   diag?: string;
   /** Kom kastet från en avslöjad dold pil? */
   revealed?: boolean;
+  /**
+   * Grannfält inom BOUNDARY_MARGIN_MM (dartMath-etiketter, närmast först).
+   * Finns bara när spetsen satt nära en tråd eller ringkant.
+   */
+  alt?: string[];
 }
 
 export type MatchAction = { t: 'T'; v: number; m: number; d?: DetectionMeta } | { t: 'E' };

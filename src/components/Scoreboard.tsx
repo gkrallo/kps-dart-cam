@@ -69,6 +69,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
       {editIdx !== null && (
         <ThrowEditor
           current={editingEntry ? editingEntry.dart : null}
+          suggestions={editingEntry?.alt}
           onApply={(seg) => {
             onEditThrow(editIdx, seg);
             setEditIdx(null);
@@ -129,6 +130,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
             {Array.from({ length: Math.min(slots, 8) }).map((_, index) => {
               const dart = currentDarts[index];
               const ai = turnLog[index]?.ai;
+              const unsure = !!turnLog[index]?.alt?.length;
               return (
                 <button
                   key={index}
@@ -136,11 +138,14 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
                   onClick={() => ai !== undefined && setEditIdx(ai)}
                   className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl border flex flex-col items-center justify-center font-bold shadow-sm transition-all ${
                     dart
-                      ? 'bg-slate-800 border-blue-500/50 text-blue-400 active:scale-95'
+                      ? unsure
+                        ? 'bg-slate-800 border-amber-400 text-amber-300 active:scale-95'
+                        : 'bg-slate-800 border-blue-500/50 text-blue-400 active:scale-95'
                       : 'bg-slate-950/60 border-slate-800 text-slate-700'
                   }`}
+                  title={unsure ? 'Satt nära gränsen – tryck för att rätta' : undefined}
                 >
-                  <span className="text-xs sm:text-sm">{dart ? segLabel(dart) : '–'}</span>
+                  <span className="text-xs sm:text-sm">{dart ? segLabel(dart) + (unsure ? '?' : '') : '–'}</span>
                   {dart && <span className="text-[8px] text-slate-500">{segScore(dart)}p</span>}
                 </button>
               );

@@ -26,6 +26,22 @@ export function label(d: Seg | null | undefined): string {
   return String(d.v);
 }
 
+/**
+ * dartMath-etikett (S20, T5, D16, DB, 25, MISS) till Seg. Används för
+ * DetectionMeta.alt, som sparas som etiketter för att rättningsloggen ska gå
+ * att läsa. Okänd etikett ger null.
+ */
+export function segFromLabel(label: string): Seg | null {
+  if (label === 'MISS') return { v: 0, m: 1 };
+  if (label === 'DB') return { v: 25, m: 2 };
+  if (label === '25') return { v: 25, m: 1 };
+  const m = /^([SDT])(\d{1,2})$/.exec(label);
+  if (!m) return null;
+  const v = Number(m[2]);
+  if (v < 1 || v > 20) return null;
+  return { v, m: m[1] === 'T' ? 3 : m[1] === 'D' ? 2 : 1 };
+}
+
 export const BULL25: Seg = seg(25, 1);
 export const BULL50: Seg = seg(25, 2);
 

@@ -6,12 +6,12 @@ import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { Point } from './types';
 import { useDartDetector, type DetectorDebug } from './hooks/useDartDetector';
 import { useMatch } from './hooks/useMatch';
-import { getScoreFromPixel, pixelToCanonical } from './utils/dartMath';
+import { getScoreFromPixel, nearbyScores, pixelToCanonical } from './utils/dartMath';
 import type { DetectionMeta } from './game/types';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
-import { segFromDartScore } from './game';
+import { segFromDartScore, segFromLabel } from './game';
 import { engineFor, matchState, insertIndexForRevealedThrow } from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
@@ -32,13 +32,31 @@ const AUTO_RESUME_MS = 2 * 60 * 1000;
 /** Vad detektorn såg, för rättningsloggen (följer med kastet i kastlistan). */
 function detectionMeta(pt: Point, label: string, info: { how: string; diag: string }): DetectionMeta {
   const { X, Y } = pixelToCanonical(pt.x, pt.y);
+  const alt = nearbyScores(X, Y).map((n) => n.score.label);
   return {
     label,
     rMM: Math.round(Math.hypot(X, Y) * 10) / 10,
     deg: Math.round((((Math.atan2(X, -Y) * 180) / Math.PI + 360) % 360) * 10) / 10,
     how: info.how,
     ...(info.diag ? { diag: info.diag } : {}),
+    ...(alt.length ? { alt } : {}),
   };
+}
+
+/**
+ * Sitter spetsen nära en tråd säger vi det direkt efter poängen: "15 - eller
+ * 10". Spelaren går ändå fram till tavlan för att dra ut pilarna och kan
+ * titta just då; rättningen ligger sedan som snabbval på pilen. Fler än en
+ * granne (ett hörn) blir "nära gränsen" - tre alternativ i örat hjälper ingen.
+ */
+function speakAlternatives(meta: DetectionMeta) {
+  const alt = meta.alt ?? [];
+  if (alt.length === 1) {
+    const s = segFromLabel(alt[0]);
+    audioEngine.speak(`eller ${audioEngine.scoreText(alt[0], s ? s.v * s.m : 0)}`);
+  } else if (alt.length > 1) {
+    audioEngine.speak('nära gränsen');
+  }
 }
 
 export default function App() {
@@ -165,7 +183,8 @@ export default function App() {
 
   const handleDartDetected = useCallback((pt: Point, seq: number, info: { how: string; diag: string }) => {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
-    const res = throwSeg(segFromDartScore(scoreObj), detectionMeta(pt, scoreObj.label, info));
+    const meta = detectionMeta(pt, scoreObj.label, info);
+    const res = throwSeg(segFromDartScore(scoreObj), meta);
     dartsSinceClearRef.current += 1;
     // En ny pil betyder en ny tur: en tidigare "Avsluta tur" gäller inte längre.
     manualEndRef.current = false;
@@ -191,8 +210,9 @@ export default function App() {
 
     audioEngine.playDartHitSound();
     audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
+    speakAlternatives(meta);
 
-    setLastScoredDartLabel(scoreObj.label);
+    setLastScoredDartLabel(meta.alt ? `${scoreObj.label} / ${meta.alt[0]}?` : scoreObj.label);
     window.setTimeout(() => setLastScoredDartLabel(null), 2500);
 
     // Tjock sägs direkt, inte först när tavlan töms: spelaren ska veta att
@@ -343,7 +363,8 @@ export default function App() {
     // Ställningen med: i Farfar är turen redan stängd när en pil saknas, och
     // då måste pilen in före den som stängde turen - inte hos nästa spelare.
     const at = insertIndexForRevealedThrow(match.actions, matchState(match));
-    const accepted = insertMissingThrow(at, seg, { ...detectionMeta(pt, scoreObj.label, info), revealed: true });
+    const meta: DetectionMeta = { ...detectionMeta(pt, scoreObj.label, info), revealed: true };
+    const accepted = insertMissingThrow(at, seg, meta);
     if (!accepted) {
       // Turen var redan full (301/501): pilen kom inte in. Säg det, i stället
       // för att läsa upp ett kast som inte finns.
@@ -357,6 +378,7 @@ export default function App() {
     audioEngine.playDartHitSound();
     audioEngine.speak('Dold pil hittades:');
     audioEngine.speakScore(scoreObj.label, scoreObj.totalPoints);
+    speakAlternatives(meta);
     setLastScoredDartLabel(`Dold: ${scoreObj.label}`);
     window.setTimeout(() => setLastScoredDartLabel(null), 3000);
   }, [match, insertMissingThrow]);

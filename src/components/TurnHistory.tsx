@@ -50,7 +50,7 @@ const MAX_TURNS = 12;
  */
 export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, onClose }: Props) {
   const [editing, setEditing] = useState<
-    { mode: 'edit' | 'insert'; actionIndex: number; current: Seg | null } | null
+    { mode: 'edit' | 'insert'; actionIndex: number; current: Seg | null; suggestions?: Seg[] } | null
   >(null);
 
   const groups = groupTurns(match.log).slice(-MAX_TURNS).reverse();
@@ -72,6 +72,7 @@ export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, 
       {editing && (
         <ThrowEditor
           current={editing.current}
+          suggestions={editing.suggestions}
           onApply={(seg) => {
             if (editing.mode === 'edit') onEditThrow(editing.actionIndex, seg);
             else onInsertThrow(editing.actionIndex, seg);
@@ -129,11 +130,13 @@ export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, 
                   <div key={e.ai} className="flex items-center">
                     {insertButton(e.ai, `pre-${e.ai}`)}
                     <button
-                      onClick={() => setEditing({ mode: 'edit', actionIndex: e.ai, current: e.dart })}
-                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl border bg-slate-800 border-blue-500/40 text-blue-300 active:scale-95 flex flex-col items-center justify-center font-bold shrink-0"
-                      title={`Pil ${i + 1} – tryck för att rätta`}
+                      onClick={() => setEditing({ mode: 'edit', actionIndex: e.ai, current: e.dart, suggestions: e.alt })}
+                      className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl border bg-slate-800 active:scale-95 flex flex-col items-center justify-center font-bold shrink-0 ${
+                        e.alt?.length ? 'border-amber-400 text-amber-300' : 'border-blue-500/40 text-blue-300'
+                      }`}
+                      title={`Pil ${i + 1}${e.alt?.length ? ' satt nära gränsen' : ''} – tryck för att rätta`}
                     >
-                      <span className="text-xs sm:text-sm">{segLabel(e.dart)}</span>
+                      <span className="text-xs sm:text-sm">{segLabel(e.dart) + (e.alt?.length ? '?' : '')}</span>
                       <span className="text-[8px] text-slate-500">{segScore(e.dart)}p</span>
                     </button>
                   </div>

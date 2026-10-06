@@ -5,6 +5,7 @@ import {
   canonicalToPixel,
   getScoreFromCanonicalCoordinates as score,
   getScoreFromPixel,
+  nearbyScores,
   pixelToCanonical,
 } from '../dartMath';
 
@@ -124,5 +125,43 @@ describe('regressionsvakt mot de gamla felaktiga radierna', () => {
   });
   it('en träff på 245 px radie ÄR trippel (gamla koden sa enkel)', () => {
     expect(getScoreFromPixel(400, 400 - 245).label).toBe('T20');
+  });
+});
+
+/** Samma riktning som at(), men som mm-koordinater för nearbyScores. */
+const xy = (r: number, deg: number): [number, number] => {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return [r * Math.cos(rad), r * Math.sin(rad)];
+};
+const alts = (r: number, deg: number) => nearbyScores(...xy(r, deg)).map((n) => n.score.label);
+
+describe('nearbyScores: osäkerhetsflaggan nära trådar', () => {
+  // Kvällens tre gränsfel 2026-10-06 (rättningsloggen), läst -> sanning.
+  it('S15 på 83,8 mm / 117,3° har S10 som granne (sanningen var S10)', () => {
+    expect(at(83.8, 117.3).label).toBe('S15');
+    expect(alts(83.8, 117.3)).toEqual(['S10']);
+  });
+  it('S16 på 58,2 mm / 225,8° har S7 som granne (sanningen var S7)', () => {
+    expect(at(58.2, 225.8).label).toBe('S16');
+    expect(alts(58.2, 225.8)).toEqual(['S7']);
+  });
+  it('hörnet S14 på 98,7 mm / 296,7° ger alla tre grannar, sanningen T9 inräknad', () => {
+    expect(at(98.7, 296.7).label).toBe('S14');
+    const a = alts(98.7, 296.7);
+    expect(a).toEqual(expect.arrayContaining(['T14', 'S9', 'T9']));
+    expect(a).toHaveLength(3);
+  });
+  it('mitt i ett fält finns inga grannar', () => {
+    expect(alts(TRIPLE, 0)).toEqual([]);
+    expect(alts(60, 18)).toEqual([]);
+  });
+  it('DB nära kanten nämner grön bull - det Farfar hänger på', () => {
+    expect(alts(BOARD_MM.innerBull - 0.3, 40)).toEqual(['25']);
+  });
+  it('närmast först, och utanför marginalen är tyst', () => {
+    const n = nearbyScores(...xy(BOARD_MM.tripleOuter + 0.2, 3));
+    expect(n[0].score.label).toBe('T20');
+    expect(n[0].distMm).toBeLessThanOrEqual(0.3);
+    expect(alts(BOARD_MM.tripleOuter + 1.5, 0)).toEqual([]);
   });
 });

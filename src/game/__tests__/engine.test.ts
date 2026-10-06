@@ -13,7 +13,7 @@ import {
   restoreMatch,
   serializeMatch,
 } from '../match';
-import { segFromDartScore } from '../index';
+import { segFromDartScore, segFromLabel } from '../index';
 import { farfarEngine, targetFor } from '../farfar';
 import type { GameMode, Match } from '../types';
 
@@ -399,5 +399,25 @@ describe('granskning 2026-09-18: hål mellan event-sourcingen och motorerna', ()
     expect(segFromDartScore(mk2('25', 25, 1))).toEqual({ v: 25, m: 1 });
     expect(segFromDartScore(mk2('MISS', 0, 0))).toEqual({ v: 0, m: 1 });
     expect(segFromDartScore(mk2('T20', 20, 3))).toEqual({ v: 20, m: 3 });
+  });
+});
+
+describe('segFromLabel och osäkra kast i loggen', () => {
+  it('läser dartMath-etiketter', () => {
+    expect(segFromLabel('S10')).toEqual({ v: 10, m: 1 });
+    expect(segFromLabel('T9')).toEqual({ v: 9, m: 3 });
+    expect(segFromLabel('D16')).toEqual({ v: 16, m: 2 });
+    expect(segFromLabel('DB')).toEqual({ v: 25, m: 2 });
+    expect(segFromLabel('25')).toEqual({ v: 25, m: 1 });
+    expect(segFromLabel('MISS')).toEqual({ v: 0, m: 1 });
+    expect(segFromLabel('T21')).toBeNull();
+    expect(segFromLabel('X')).toBeNull();
+  });
+  it('grannfälten följer med till loggen och försvinner när kastet rättas', () => {
+    const m = mk('501', ['A', 'B']);
+    throwDart(m, { v: 15, m: 1 }, { label: 'S15', rMM: 83.8, deg: 117.3, how: 'axel', alt: ['S10'] });
+    expect(matchState(m).log[0].alt).toEqual([{ v: 10, m: 1 }]);
+    replaceThrow(m, 0, { v: 10, m: 1 });
+    expect(matchState(m).log[0].alt).toBeUndefined();
   });
 });

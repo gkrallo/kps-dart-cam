@@ -17,6 +17,7 @@ export {
   restoreMatch,
 } from './match';
 export { targetFor as farfarTargetFor } from './farfar';
+export { segFromLabel } from './segments';
 
 export const GAME_MODES = ['301', '501', 'FARFAR'] as const;
 export const GAME_MODE_LABEL: Record<(typeof GAME_MODES)[number], string> = {

@@ -80,6 +80,48 @@ export function getScoreFromCanonicalCoordinates(X: number, Y: number): DartScor
 }
 
 /**
+ * Så nära en gräns (tråd eller ringkant) får spetsen ligga innan avläsningen
+ * räknas som osäker och grannfältet nämns.
+ *
+ * Uppmätt i spel 2026-10-06, 64 avläsningar: tre av fem rättningar var
+ * gränsfall på 0,35, 0,45 och 0,85 mm från tråden (S15/S10, hörnet
+ * S14/T9, S16/S7) - kalibreringens rotation mättes samtidigt till -0,25°,
+ * så det är precisionsgränsen och inget som går att kalibrera bort. De två
+ * andra var blobbfel långt från gränser. Vid 1,0 mm flaggades 10 av 64 kast,
+ * och alla tre gränsfel fanns bland dem; vid 0,75 mm föll S16/S7 bort.
+ */
+export const BOUNDARY_MARGIN_MM = 1.0;
+
+/**
+ * Fälten som ligger inom `marginMm` från spetsen men skiljer sig från det
+ * avlästa, närmast först. Tom lista = spetsen sitter tryggt inne i sitt fält.
+ *
+ * Provar punkter i ringar runt spetsen i stället för att räkna avstånd till
+ * varje tråd och ringkant var för sig: då kommer hörnen med av sig själva.
+ * I hörnfallet ovan var närmaste granne T14 (0,35 mm) men sanningen T9,
+ * diagonalt - därför returneras alla grannar, inte bara den närmaste.
+ */
+export function nearbyScores(
+  X: number,
+  Y: number,
+  marginMm: number = BOUNDARY_MARGIN_MM,
+): { score: DartScore; distMm: number }[] {
+  const base = getScoreFromCanonicalCoordinates(X, Y).label;
+  const found = new Map<string, { score: DartScore; distMm: number }>();
+  const STEPS = 10;
+  const DIRS = 72;
+  for (let s = 1; s <= STEPS; s++) {
+    const d = (marginMm * s) / STEPS;
+    for (let k = 0; k < DIRS; k++) {
+      const a = (k / DIRS) * 2 * Math.PI;
+      const sc = getScoreFromCanonicalCoordinates(X + d * Math.cos(a), Y + d * Math.sin(a));
+      if (sc.label !== base && !found.has(sc.label)) found.set(sc.label, { score: sc, distMm: d });
+    }
+  }
+  return [...found.values()].sort((p, q) => p.distMm - q.distMm);
+}
+
+/**
  * Bekvämlighetsfunktion: poäng direkt från en punkt i den warpade 800x800-bilden.
  */
 export function getScoreFromPixel(x: number, y: number): DartScore {

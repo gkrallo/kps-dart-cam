@@ -6,6 +6,11 @@ import { label as segLabel } from '../game/segments';
 interface Props {
   /** Nuvarande pil (för rättning), eller null om det är en ny pil. */
   current: Seg | null;
+  /**
+   * Avläsningen satt nära en gräns: grannfälten, närmast först. Visas som
+   * stora snabbval överst - tre av fem rättningar 2026-10-06 var ett av dem.
+   */
+  suggestions?: Seg[];
   onApply: (seg: Seg) => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -14,7 +19,7 @@ interface Props {
 /**
  * Liten knappsats för att rätta en avläst pil. Väljer fält + multiplikator.
  */
-export function ThrowEditor({ current, onApply, onDelete, onClose }: Props) {
+export function ThrowEditor({ current, suggestions, onApply, onDelete, onClose }: Props) {
   const [mult, setMult] = useState<number>(current?.m ?? 1);
 
   const pick = (v: number, m: number) => onApply({ v, m });
@@ -30,6 +35,23 @@ export function ThrowEditor({ current, onApply, onDelete, onClose }: Props) {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {suggestions && suggestions.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-bold text-amber-300">Satt nära gränsen – troligen:</span>
+            <div className="grid grid-cols-3 gap-2">
+              {suggestions.map((s) => (
+                <button
+                  key={`${s.v}-${s.m}`}
+                  onClick={() => onApply(s)}
+                  className="py-3 rounded-xl bg-amber-700 hover:bg-amber-600 active:scale-95 text-white font-black text-base border border-amber-500"
+                >
+                  {segLabel(s)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Multiplikator */}
         <div className="grid grid-cols-3 gap-2">
