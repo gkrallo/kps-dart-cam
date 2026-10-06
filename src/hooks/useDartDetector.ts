@@ -815,6 +815,14 @@ const STARTUP_GRACE_MS = 2000;
             Math.hypot(w.x - BOARD_PX / 2, w.y - BOARD_PX / 2) * MM_PER_PX;
           if (radiusMM > MAX_PLAUSIBLE_RADIUS_MM) {
             lastAnalysis = `spets på radie ${radiusMM | 0} mm, utanför tavlan (troligen arm eller bara vingen)`;
+          } else if (how.startsWith('tyngdpunkt') && radiusMM > BOARD_MM.doubleOuter) {
+            // En kompakt klump utan axel vars tyngdpunkt hamnar utanför
+            // tavlan är nästan alltid en ensam VINGE - pipan och spetsen satt
+            // bakom en annan pil. Uppmätt 2026-10-06: en S20 bakom pil 1
+            // lästes MISS på 179 mm (blobb 114x97, elong 1,0). En riktig miss i
+            // kanten syns som en hel pil med axel. Avvisa: hellre oläst (varning
+            // vid turslut, ofta dold pil vid uttagning) än en tyst nolla.
+            lastAnalysis = `kompakt klump på ${radiusMM | 0} mm, utanför tavlan - troligen bara en vinge, avstår`;
           } else {
             result = {
               tip: tipRaw,
