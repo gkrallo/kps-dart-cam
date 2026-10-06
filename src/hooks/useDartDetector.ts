@@ -210,8 +210,15 @@ export const useDartDetector = (
      * varje analys (`rawGray.copyTo(rawBaseline)`); med stacken måste det
      * göras explicit i varje gren som inte redan flyttar en nivå.
      */
+    /**
+     * Nivå 0 är referensen för TOM tavla. Den får inte skrivas över medan
+     * något sitter i tavlan: uppmätt 2026-10-06 skrevs två oregistrerade pilar
+     * in i den när en avvisad blobb absorberades, och avstämningen kunde
+     * därefter inte se dem - dold pil-funktionen blev blind.
+     */
+    const topIsProtectedEmpty = () => snapshots.length === 1 && materialSince !== 0;
     const absorbIntoTop = () => {
-      if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
+      if (snapshots.length > 0 && !topIsProtectedEmpty()) rawGray.copyTo(snapshots[snapshots.length - 1]);
     };
 
     /**
@@ -246,6 +253,7 @@ export const useDartDetector = (
     const absorbBlobRegion = () => {
       const top = snapshots[snapshots.length - 1];
       if (!top) return;
+      if (topIsProtectedEmpty()) return;
       if (!lastBlobRect) {
         absorbIntoTop(); // ingen kontur att peka på - brusnivå, ta hela
         return;
@@ -314,6 +322,7 @@ export const useDartDetector = (
     // mot (sammanslagen form bokförd som uttag) stoppas numera tidigare, av
     // storleksspärren och av att en sammanslagen form aldrig tolkas som uttag.
     const RECENTLY_FORGOTTEN_PX = 20;
+    const RESIDUE_REMOVAL_ENABLED = false;
     const nearRecentlyForgotten = (rawTip: Point, now: number) =>
       recentlyForgotten.some(
         (f) => now - f.at < RECENTLY_FORGOTTEN_MS && Math.hypot(f.tip.x - rawTip.x, f.tip.y - rawTip.y) < RECENTLY_FORGOTTEN_PX,
@@ -1308,7 +1317,13 @@ const STARTUP_GRACE_MS = 2000;
         return;
       }
 
-      if (removalLikely) {
+      // Reservgrenen "uttag med rest" är avstängd 2026-10-06. Den nås bara när
+      // avstämningen är osäker, och då är dBase < dTop nära ett myntkast: i spel
+      // tolkade den tre gånger samma kväll en ny pil intill en gammal som att
+      // den gamla dragits ut, glömde den, och nästa analys registrerade den
+      // igen som nytt kast. Dolda pilar hittas av avstämningen. Faller igenom
+      // till kastvägen, där ett hål avvisas av materialtestet.
+      if (removalLikely && RESIDUE_REMOVAL_ENABLED) {
         // Toppilen är borta, men skillnaden mot nivån under är för stor för
         // att vara brus - en pil satt dold bakom den. Leta pilform i det som
         // fortfarande skiljer sig mot den ÄLDRE nivån.
@@ -1577,7 +1592,7 @@ const STARTUP_GRACE_MS = 2000;
           if (calmSince === 0) calmSince = now;
           else if (now - calmSince > 15000) {
             gray.copyTo(baseline);
-            if (snapshots.length > 0) rawGray.copyTo(snapshots[snapshots.length - 1]);
+            if (snapshots.length > 0 && !topIsProtectedEmpty()) rawGray.copyTo(snapshots[snapshots.length - 1]);
             // Referensen för TOM tavla får bara uppdateras när tavlan faktiskt
             // är tom. `dartsThisCycle === 0` räcker inte: en pil som landat
             // men förkastats av analysen (eller aldrig känts igen) ger också
