@@ -59,6 +59,8 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   /** Återställd sparad kalibrering som ska kontrolleras mot tavlan en gång. */
   const restoredRef = useRef(false);
   const restoredCheckedRef = useRef(false);
+  /** Punkterna som återställdes - har användaren hunnit ändra dem hoppar kontrollen över. */
+  const restoredPointsRef = useRef<Point[] | null>(null);
 
   // "Sikte"-steget körs bara före punktplacering. Telefonen sitter fast på
   // stativ, så appen kan inte rikta om sig själv - det användaren GÖR är att
@@ -113,6 +115,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       onPointsChange(initialPoints);
       if (restored) {
         restoredRef.current = true;
+        restoredPointsRef.current = restored;
         setCalibrationStep('punkter');
         setDetectStatus('Sparad kalibrering återställd - kontrollerar den mot tavlan...');
       }
@@ -125,14 +128,26 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
    * fanns det som knappar man fick komma ihåg att trycka på. Väntar 2,5 s så
    * att den återställda hårdvaruzoomen hunnit slå igenom - annars mäts
    * ringarna i fel bild.
+   *
+   * Väntar själv på att videon fått storlek. Första versionen avbröt bara
+   * om videoWidth var 0 och räknade med att effekten skulle köras igen - men
+   * inget beroende ändras när videon blir klar, så kontrollen kördes aldrig
+   * (sett på telefonen 2026-10-06: meddelandet "kontrollerar..." låg kvar).
    */
   useEffect(() => {
     if (!restoredRef.current || restoredCheckedRef.current) return;
-    if (!cv || !videoElement || videoElement.videoWidth === 0) return;
-    restoredCheckedRef.current = true;
-    const t = window.setTimeout(() => {
+    if (!cv || !videoElement) return;
+    let runTimer: number | undefined;
+    const run = () => {
+      if (restoredCheckedRef.current) return;
+      restoredCheckedRef.current = true;
       let pts = pointsRef.current;
       if (pts.length !== 4) return;
+      // Har användaren redan dragit en punkt eller tryckt Auto gäller deras val.
+      if (pts !== restoredPointsRef.current) {
+        setDetectStatus(null);
+        return;
+      }
       const align = alignSectorsToBoard(cv, videoElement, pts, containerWidth, containerHeight);
       if (align) pts = align.points;
       const refined = refineCalibrationToRings(cv, videoElement, pts, containerWidth, containerHeight);
@@ -145,9 +160,17 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
         setDetectStatus('Sparad kalibrering stämmer inte med bilden (kameran flyttad?). Tryck Auto.');
       }
       window.setTimeout(() => setDetectStatus(null), 7000);
-    }, 2500);
-    return () => window.clearTimeout(t);
-  }, [cv, videoElement, points.length]);
+    };
+    const poll = window.setInterval(() => {
+      if (videoElement.videoWidth === 0 || runTimer !== undefined) return;
+      window.clearInterval(poll);
+      runTimer = window.setTimeout(run, 2500);
+    }, 250);
+    return () => {
+      window.clearInterval(poll);
+      if (runTimer !== undefined) window.clearTimeout(runTimer);
+    };
+  }, [cv, videoElement]);
 
   // Delad detekteringslogik: ellipsmetoden klarar sneda kameravinklar;
   // HoughCircles (cirkel-antagande) är fallback om färgsegmenteringen inte
