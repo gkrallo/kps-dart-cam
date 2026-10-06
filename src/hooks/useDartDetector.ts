@@ -721,7 +721,25 @@ const STARTUP_GRACE_MS = 2000;
           // T15 lästes som S15 på 98,5 mm; trimmad 104-105 mm). Gå bakåt
           // längs axeln förbi det som inte är pilmaterial. Bara när axeln
           // valdes - tyngdpunkten har ingen riktning att gå i.
-          if (tipRaw && axis && choice.how.startsWith('axel')) {
+          // Bara när pilen pekar INÅT mot bullen, nästan radiellt. Skuggan från
+          // ringlampan faller radiellt inåt: förbi spetsen bara om spetsen är
+          // den inre änden. Uppmätt 2026-10-06: en T11 vars spets pekade utåt
+          // trimmades till S11, och en snett liggande S15 nära bullen till S10
+          // (trimningen går längs axeln, alltså åt sidan när axeln inte är
+          // radiell). Vinkeln mäts i tavlans plan mellan axeln (vinge -> spets)
+          // och riktningen från spetsen in mot bullen; högst 30°.
+          const pointsInward = (() => {
+            if (!axis) return false;
+            const t = warpPoint(axis.tip);
+            const f = warpPoint(axis.tail);
+            const ax = t.x - f.x;
+            const ay = t.y - f.y;
+            const ix = BOARD_PX / 2 - t.x;
+            const iy = BOARD_PX / 2 - t.y;
+            const n = Math.hypot(ax, ay) * Math.hypot(ix, iy);
+            return n > 0 && (ax * ix + ay * iy) / n >= Math.cos((30 * Math.PI) / 180);
+          })();
+          if (tipRaw && axis && choice.how.startsWith('axel') && pointsInward) {
             const px = -axis.axis.y;
             const py = axis.axis.x;
             const sampleGrey = (x: number, y: number) => {
