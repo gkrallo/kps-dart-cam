@@ -13,7 +13,7 @@ import {
   saveCalibration,
 } from '../utils/calibration';
 import type { ZoomCapability } from './CameraFeed';
-import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward, Compass } from 'lucide-react';
+import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward, Compass, MoreHorizontal } from 'lucide-react';
 
 interface CalibrationOverlayProps {
   containerWidth: number;
@@ -46,6 +46,19 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const [detectStatus, setDetectStatus] = useState<string | null>(null);
   const [showDpad, setShowDpad] = useState<boolean>(false);
   const [anchorMode, setAnchorMode] = useState<boolean>(false);
+  /**
+   * "Mer"-panelen. Beslutat med Kristian 2026-10-06: Auto gör numera ellips,
+   * sektorrotation och finjustering i ett tryck och satt rätt på första
+   * försöket i båda tavelsessionerna, så de fem hjälpknapparna (omärkta
+   * ikoner på telefonen) gömmer sig här. Öppnas av sig själv när Auto inte
+   * kan läsa sektorerna.
+   */
+  const [showMore, setShowMore] = useState<boolean>(false);
+  const pointsRef = useRef<Point[]>([]);
+  pointsRef.current = points;
+  /** Återställd sparad kalibrering som ska kontrolleras mot tavlan en gång. */
+  const restoredRef = useRef(false);
+  const restoredCheckedRef = useRef(false);
 
   // "Sikte"-steget körs bara före punktplacering. Telefonen sitter fast på
   // stativ, så appen kan inte rikta om sig själv - det användaren GÖR är att
@@ -99,12 +112,42 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       setPoints(initialPoints);
       onPointsChange(initialPoints);
       if (restored) {
+        restoredRef.current = true;
         setCalibrationStep('punkter');
-        setDetectStatus('Sparad kalibrering återställd. Justera vid behov.');
-        window.setTimeout(() => setDetectStatus(null), 5000);
+        setDetectStatus('Sparad kalibrering återställd - kontrollerar den mot tavlan...');
       }
     }
   }, [containerWidth, containerHeight]);
+
+  /**
+   * En återställd kalibrering kontrolleras automatiskt mot tavlan: sektorerna
+   * riktas in ur färgerna och punkterna finjusteras mot ringkanterna. Förut
+   * fanns det som knappar man fick komma ihåg att trycka på. Väntar 2,5 s så
+   * att den återställda hårdvaruzoomen hunnit slå igenom - annars mäts
+   * ringarna i fel bild.
+   */
+  useEffect(() => {
+    if (!restoredRef.current || restoredCheckedRef.current) return;
+    if (!cv || !videoElement || videoElement.videoWidth === 0) return;
+    restoredCheckedRef.current = true;
+    const t = window.setTimeout(() => {
+      let pts = pointsRef.current;
+      if (pts.length !== 4) return;
+      const align = alignSectorsToBoard(cv, videoElement, pts, containerWidth, containerHeight);
+      if (align) pts = align.points;
+      const refined = refineCalibrationToRings(cv, videoElement, pts, containerWidth, containerHeight);
+      if (refined) pts = refined.points;
+      if (align || refined) {
+        setPoints(pts);
+        onPointsChange(pts);
+        setDetectStatus('Sparad kalibrering kontrollerad mot tavlan. Titta på de streckade linjerna och tryck Spara kalibrering.');
+      } else {
+        setDetectStatus('Sparad kalibrering stämmer inte med bilden (kameran flyttad?). Tryck Auto.');
+      }
+      window.setTimeout(() => setDetectStatus(null), 7000);
+    }, 2500);
+    return () => window.clearTimeout(t);
+  }, [cv, videoElement, points.length]);
 
   // Delad detekteringslogik: ellipsmetoden klarar sneda kameravinklar;
   // HoughCircles (cirkel-antagande) är fallback om färgsegmenteringen inte
@@ -318,9 +361,21 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       const detected = runBoardDetection();
 
       if (detected) {
-        setPoints(detected);
-        onPointsChange(detected);
-        setDetectStatus('Darttavla hittad. Kontrollera att 20:an är i toppen!');
+        // Ellipsmetoden riktar redan in sektorerna, men reservmetoden
+        // (HoughCircles) gör det inte - och vi vill veta om färgerna gick
+        // att läsa. Går de inte: öppna Mer och be om 20:an i stället för
+        // att låta ett vridet hjul passera.
+        const align = alignSectorsToBoard(cv, videoElement, detected, containerWidth, containerHeight);
+        const final = align ? align.points : detected;
+        setPoints(final);
+        onPointsChange(final);
+        if (align) {
+          setDetectStatus('Tavlan hittad. Kontrollera att de streckade linjerna ligger på trådarna och tryck Spara kalibrering.');
+        } else {
+          setShowMore(true);
+          setAnchorMode(true);
+          setDetectStatus('Tavlan hittad, men sektorernas färger gick inte att läsa. Tryck där 20:an sitter på tavlan.');
+        }
       } else {
         setDetectStatus('Ingen tavla hittades. Rikta kameran mot tavlan, eller dra punkterna manuellt.');
       }
@@ -743,6 +798,21 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           </button>
 
           <button
+            onClick={() => setShowMore((v) => !v)}
+            className={`active:scale-95 px-3 py-2 rounded-2xl font-bold text-xs flex items-center gap-1.5 border shadow-lg backdrop-blur-md transition-all ${
+              showMore
+                ? 'bg-slate-700 text-white border-slate-500'
+                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+            }`}
+            title="Fler kalibreringsverktyg"
+          >
+            <MoreHorizontal className="w-4 h-4" />
+            <span>Mer</span>
+          </button>
+
+          {showMore && (
+          <div className="w-full flex flex-wrap items-center gap-2">
+          <button
             onClick={() => setAnchorMode((v) => !v)}
             className={`active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border shadow-lg backdrop-blur-md transition-all ${
               anchorMode
@@ -752,7 +822,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             title="Tryck där 20:an sitter så vrids kalibreringen rätt"
           >
             <Crosshair className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{anchorMode ? 'Tryck på 20:an…' : 'Peka ut 20:an'}</span>
+            <span>{anchorMode ? 'Tryck på 20:an…' : 'Peka ut 20:an'}</span>
           </button>
 
           <button
@@ -761,7 +831,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             title="Passar punkterna mot ringkanterna i bilden och visar hur bra passningen är"
           >
             <Focus className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Finjustera</span>
+            <span>Finjustera</span>
           </button>
 
           <button
@@ -770,7 +840,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             title="Vrider sektorhjulet så att de streckade linjerna hamnar på tavlans riktiga trådar"
           >
             <Compass className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Rikta in sektorer</span>
+            <span>Rikta in sektorer</span>
           </button>
 
           <button
@@ -779,7 +849,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             title="Återställ punkterna till en centrerad cirkel på skärmen"
           >
             <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Återställ</span>
+            <span>Återställ</span>
           </button>
 
           <button
@@ -788,8 +858,10 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             title="Tillbaka till sikte- och zoomsteget"
           >
             <Target className="w-3.5 h-3.5 text-slate-400" />
-            <span className="hidden sm:inline">Sikte</span>
+            <span>Sikte</span>
           </button>
+          </div>
+          )}
 
           {detectStatus && (
             <span className="w-full sm:w-auto sm:max-w-xs text-[11px] leading-snug text-amber-300 font-semibold bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-xl border border-amber-500/40 shadow-lg">
