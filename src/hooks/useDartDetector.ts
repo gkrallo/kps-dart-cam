@@ -957,15 +957,51 @@ const STARTUP_GRACE_MS = 2000;
       }
     };
 
+    /**
+     * ?debug: kopior av analysens indata - rå gråskala nu, toppen av stacken
+     * och tom tavla - för de tre senaste analyserna, så tools/grab.mjs kan
+     * spara dem och felfallet köras om offline. Bildrutan ensam räcker inte:
+     * när kollisionsfallen 2026-10-06 skulle undersökas fanns bara läget
+     * EFTER, inte referensen detektorn jämförde mot. ~6 MB per analys.
+     */
+    let pendingFrames: {
+      at: string;
+      w: number;
+      h: number;
+      cur: Uint8Array;
+      top: Uint8Array;
+      empty: Uint8Array;
+      tips: Point[];
+    } | null = null;
+    const captureAnalysisInputs = () => {
+      if (!debugRef.current || snapshots.length === 0) return;
+      pendingFrames = {
+        at: new Date().toISOString(),
+        w: rawGray.cols,
+        h: rawGray.rows,
+        cur: rawGray.data.slice(),
+        top: snapshots[snapshots.length - 1].data.slice(),
+        empty: snapshots[0].data.slice(),
+        tips: rawTips.map((p) => ({ ...p })),
+      };
+    };
+
     /** En rad per analys när ?debug är på: vilken gren, med vilka siffror. */
     const logAnalysis = (branch: string, dTop: number, dBase: number) => {
       if (!debugRef.current) return;
       const base = dBase === Infinity ? '-' : `${dBase | 0}`;
-      console.log(
+      const line =
         `[analyse] ${branch} dTop=${dTop | 0} dBase=${base} pilar=${snapshots.length - 1}` +
-          (lastDiag ? `  ${lastDiag}` : '') +
-          `  → ${lastAnalysis}`,
-      );
+        (lastDiag ? `  ${lastDiag}` : '') +
+        `  → ${lastAnalysis}`;
+      console.log(line);
+      if (pendingFrames) {
+        const w = window as any;
+        const ring: unknown[] = (w.__analysisFrames ??= []);
+        ring.push({ ...pendingFrames, line });
+        while (ring.length > 3) ring.shift();
+        pendingFrames = null;
+      }
     };
 
     /**
@@ -1266,6 +1302,9 @@ const STARTUP_GRACE_MS = 2000;
           onSceneChangedRef.current?.(false);
         }
       }
+      // Efter hand-spärren: den grenen körs varje bildruta medan en arm är i
+      // bild och skulle annars trycka ut de intressanta analyserna.
+      captureAnalysisInputs();
 
       let dBase = Infinity;
       const hasBelow = snapshots.length >= 2;

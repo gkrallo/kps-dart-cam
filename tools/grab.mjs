@@ -8,6 +8,11 @@
  *   frame.jpg   videobildrutan som appen just nu ser (samma kamera, samma zoom)
  *   mask.png    tröskelmasken, om fliken kördes med ?debug&mask
  *   state.json  bygge, videoläge, kalibrering, matchläge, detektorns status
+ *   analys-N/   (med ?debug) indata till de tre senaste analyserna:
+ *               cur/top/empty.gray (rå w*h byte, redan blurrad gråskala -
+ *               exakt det absdiff fick), samma som PNG, och info.json med
+ *               analysraden och de registrerade spetsarna. Gör ett felfall
+ *               körbart offline utan att man hann ta ett "tom tavla"-foto.
  *
  * Poängen: bilderna behöver aldrig gå via mobilens galleri. `frame.jpg` är
  * exakt vad appen matar in i sin egen kedja, i samma format som fixturerna
@@ -20,6 +25,7 @@
  * hel dags arbete kunde göras utan tavla.
  */
 import { mkdirSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { deflateSync } from 'node:zlib';
 import { connect, loadedBundle, main } from './cdp.mjs';
 import { sessionDir } from './capture-dir.mjs';
 
@@ -27,6 +33,41 @@ const label = (process.argv.slice(2).join('-') || 'grab')
   .replace(/[^A-Za-z0-9åäöÅÄÖ_-]+/g, '-')
   .replace(/^-+|-+$/g, '')
   .toLowerCase();
+
+/** Minimal PNG-kodare för en 8-bitars gråskalebild (repot har inga bildberoenden). */
+function grayPng(gray, w, h) {
+  const raw = Buffer.alloc((w + 1) * h);
+  for (let y = 0; y < h; y++) gray.copy(raw, y * (w + 1) + 1, y * w, (y + 1) * w);
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bitdjup
+  ihdr[9] = 0; // gråskala
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 const day = sessionDir();
 mkdirSync(day, { recursive: true });
@@ -60,6 +101,37 @@ await main(async () => {
 
     const mask = await session.evaluate('window.__lastMask ?? null');
     if (mask) writeFileSync(`${dir}/mask.png`, Buffer.from(mask.split(',')[1], 'base64'));
+
+    // Detektorns indata för de senaste analyserna (bara med ?debug): rå
+    // gråskala NU, toppen av stacken och tom tavla - exakt det absdiff fick.
+    // Utan dem går ett felfall inte att köra om; bildrutan visar bara läget
+    // efteråt. Sparas som rå .gray (w*h byte) + en PNG att titta på.
+    const analyses = await session.evaluate(`
+      (() => {
+        const ring = window.__analysisFrames ?? [];
+        const b64 = (u8) => {
+          let s = '';
+          for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+          return btoa(s);
+        };
+        return ring.map((r) => ({
+          at: r.at, w: r.w, h: r.h, line: r.line, tips: r.tips,
+          cur: b64(r.cur), top: b64(r.top), empty: b64(r.empty),
+        }));
+      })()
+    `);
+    let analysisCount = 0;
+    for (const [i, a] of (analyses ?? []).entries()) {
+      const sub = `${dir}/analys-${i + 1}`;
+      mkdirSync(sub, { recursive: true });
+      for (const k of ['cur', 'top', 'empty']) {
+        const buf = Buffer.from(a[k], 'base64');
+        writeFileSync(`${sub}/${k}.gray`, buf);
+        writeFileSync(`${sub}/${k}.png`, grayPng(buf, a.w, a.h));
+      }
+      writeFileSync(`${sub}/info.json`, JSON.stringify({ at: a.at, w: a.w, h: a.h, line: a.line, tips: a.tips }, null, 2));
+      analysisCount++;
+    }
 
     const state = await session.evaluate(`
       (() => {
@@ -98,6 +170,7 @@ await main(async () => {
     console.log(`  video      ${state.video ? `${state.video.videoWidth}x${state.video.videoHeight}` : '-'}` +
       `  ${live ? 'rullar' : 'RULLAR INTE (frusen bildruta!)'}`);
     console.log(`  mask       ${mask ? 'ja' : 'nej (kör med ?debug&mask för att få den)'}`);
+    console.log(`  analyser   ${analysisCount ? `${analysisCount} med indata (analys-N/)` : 'inga (kräver ?debug och ett bygge från 2026-10-07)'}`);
     console.log(`  kalibrering ${state.calibration ? 'sparad' : 'saknas'}`);
     if (!live) {
       console.log('\n  Videon står still. Vanligaste orsaken: en annan Chrome-flik');
