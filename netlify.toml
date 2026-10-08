@@ -1,0 +1,21 @@
+# Netlify bygger och publicerar appen från main (repot är privat; GitHub
+# Pages kräver ett publikt repo på gratisplanen). Testerna körs först - går
+# de inte igenom publiceras ingenting.
+#
+# `base` i vite.config.ts blir '/' här, eftersom GITHUB_ACTIONS inte är satt
+# hos Netlify - rätt, sajten ligger i roten.
+
+[build]
+  command = "npm test && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Vites filer under assets/ har innehållshash i namnet och ändras aldrig.
+# opencv.js (10 MB) har ingen hash och får Netlifys standard: frågar om den
+# ändrats vid varje laddning, men laddas bara ner igen om den gjort det.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
