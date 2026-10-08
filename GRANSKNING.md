@@ -738,3 +738,31 @@ slår till direkt och tömmer statusraden.
 ruta i pilraden ska gå att trycka på för att lägga till en pil, (3) logga
 bekräftelser, (4) kalibreringskontrollen vid start, (5) en ny pil som
 knuffar en gammal ska inte avvisas som "pil som rört sig".
+
+**Byggt efter passet samma kväll** (`a972dd0`, `9df702f`, `bc8d120`), alla
+mot kvällens bildpar:
+
+- **Rå-trigger.** D20-pilen som "missades" gav aldrig någon analys: den låg
+  nästan helt utanför den warpade kvadraten (warpad skillnad 207 px mot
+  gränsen 500, rå 9 866 px). Var tredje lugn bildruta jämförs nu även
+  råbilden.
+- **Andra försök utan gammalt material.** Klumpen där ny vinge låg över
+  gammal vinge blir en pilform när det gamla materialet tas bort, och
+  spetsen hamnar i S20 - rätt.
+- **Uttag ur sammansmält form.** Minskar materialet med en pil samtidigt som
+  spetsen flyttar sig, är den kvarvarande en annan pil: den läggs till i
+  stället för att den lästa skrivs om ("1 blir 20").
+- **Tom ruta i pilraden** går att trycka på för att lägga till en missad
+  pil; en handinlagd pil räknas så att den inte avslöjas igen vid uttaget.
+- **Bekräftelser** loggas (`confirm`).
+- **Kalibreringskontrollen** loggar varje steg med `[kal]` under `?debug`.
+
+**Tolkat fel först, rättat efter bildparen:** "pil som rört sig" (D20-fallet)
+var rätt - pil 3 studsade och knuffade den nedre pilen, bilden visar bara
+två pilar. T1 läst som S1 var skymning: den nya spetsen satt bakom den gamla
+pilens skaft sett från kameran. Ingen åtgärd.
+
+**Inte gjort:** dubbletten där samma pil mättes om 27 px bort och lades in
+som "dold". Materialminskningen kan inte skilja den från en helt dold pil
+som blottas när den framför dras ut, och bildparet är för rörigt för att
+avgöra vad som hände.
