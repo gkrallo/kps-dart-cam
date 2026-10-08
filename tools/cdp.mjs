@@ -88,7 +88,7 @@ export async function findAppTarget(port = 9222) {
   if (pages.length === 0) {
     const urls = list.filter((t) => t.type === 'page').map((t) => t.url);
     throw new Error(
-      `Hittar ingen flik med appen. Öppna https://gkrallo.github.io/kps-dart-cam/ på telefonen.\nÖppna flikar: ${urls.join(', ') || '(inga)'}`,
+      `Hittar ingen flik med appen. Öppna https://kps-dart-cam.netlify.app/?debug&mask på telefonen.\nÖppna flikar: ${urls.join(', ') || '(inga)'}`,
     );
   }
   if (pages.length > 1) {

@@ -6,7 +6,7 @@
  *   node tools/reload.mjs ?debug          # ladda om med parametrar
  *   node tools/reload.mjs "?debug&mask"
  *
- * Att verifiera hashen är inte överdrivet noggrant: GitHub Pages CDN ligger
+ * Att verifiera hashen är inte överdrivet noggrant: CDN:en (Netlify, tidigare GitHub Pages) ligger
  * 1-2 minuter efter att Actions blivit klart, och att testa mot ett gammalt
  * bygge i tron att det är det nya har hänt förut.
  */

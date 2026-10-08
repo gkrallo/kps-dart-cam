@@ -9,7 +9,9 @@
  */
 import { connect, loadedBundle, adb, main } from './cdp.mjs';
 
-const LIVE_URL = 'https://gkrallo.github.io/kps-dart-cam/';
+// Bygget jämförs mot adressen fliken faktiskt använder (Netlify, eller
+// GitHub Pages under övergången 2026-10) - inte en hårdkodad.
+const publishedUrl = (tabUrl) => tabUrl.split(/[?#]/)[0];
 const ok = (s) => `  OK    ${s}`;
 const warn = (s) => `  OBS   ${s}`;
 const bad = (s) => `  FEL   ${s}`;
@@ -40,7 +42,7 @@ await main(async () => {
     const loaded = await loadedBundle(session);
     let deployed = null;
     try {
-      const html = await fetch(LIVE_URL, { cache: 'no-store' }).then((r) => r.text());
+      const html = await fetch(publishedUrl(target.url), { cache: 'no-store' }).then((r) => r.text());
       deployed = html.match(/index-[A-Za-z0-9_-]+\.js/)?.[0] ?? null;
     } catch {
       /* offline - hoppa över jämförelsen */

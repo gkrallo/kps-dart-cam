@@ -71,7 +71,7 @@ principen; moln-ML är det inte.
 | Datorseende | OpenCV.js 4.12 via `@techstark/opencv-js`, självhostad |
 | Test | Vitest 2 |
 | Node | CI kör Node 20. Utvecklat mot Node 22. |
-| Publicering | GitHub Pages via GitHub Actions |
+| Publicering | Netlify (`netlify.toml`), https://kps-dart-cam.netlify.app. Repot är privat sedan 2026-10; GitHub Actions kör bara tester |
 
 Inga produktionsberoenden utöver React och lucide-react. OpenCV är en
 devDependency vars `opencv.js` kopieras till `public/` vid bygge.
@@ -137,7 +137,8 @@ scripts/boundary-analysis.ts  Hur många kast osäkerhetsflaggan markerar och hu
 scripts/crop-analysis.mjs     Beskär en sparad analys (grab.mjs analys-N/) till tom | topp | nu | skillnad kring en punkt
 tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md. history.mjs läser konsolbufferten i efterhand, corrections.mjs hämtar rättningsloggen
 public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
-.github/workflows/deploy.yml  Test → bygge → deploy till Pages
+.github/workflows/deploy.yml  Typkontroll + tester (publiceringen sköts av Netlify)
+netlify.toml                  Netlify-bygget: tester, npm run build, dist/, cachehuvuden
 AGENT.md                      Arkitektur + lista över kända begränsningar
 TESTPLAN.md                   Ordnad genomgång att köra vid tavlan (otestat -> testat)
 GRANSKNING.md                 Granskning 2026-09-18: rättat, hypoteser (D1-D8, K1-K6, S1-S4, U1-U9), metodjämförelse
@@ -167,7 +168,7 @@ och ska inte checkas in — den är 10 MB och versionsstyrs via `package.json`.
 `getUserMedia` fungerar bara över `https://` eller på `localhost`. Vill du testa
 från telefonen på samma nät räcker inte `npm run dev -- --host`; du behöver ett
 lokalt certifikat (`mkcert`) eller en tunnel. Att testa mot den publicerade
-Pages-versionen är oftast enklast.
+Netlify-versionen är oftast enklast. Byter man adress (ny origin) är localStorage tomt: kalibrera med Auto, och hämta rättningsloggen från den gamla adressen först.
 
 ### Testa utan darttavla
 
@@ -213,7 +214,7 @@ Enda variabeln som läses någonstans:
 
 | Namn | Var | Syfte |
 |---|---|---|
-| `GITHUB_ACTIONS` | `vite.config.ts` | Sätts automatiskt av GitHub Actions. Styr `base`: `/kps-dart-cam/` i CI, `/` lokalt. Sätts aldrig manuellt. |
+| `GITHUB_ACTIONS` | `vite.config.ts` | Sätts automatiskt av GitHub Actions. Styr `base`: `/kps-dart-cam/` där (från tiden med GitHub Pages), `/` annars - även hos Netlify, där sajten ligger i roten. Sätts aldrig manuellt. |
 
 Om du någon gång inför en variabel: **prefixa aldrig en hemlighet med `VITE_`.**
 Allt som heter `VITE_*` bäddas in i klientbundlen i klartext och är läsbart för

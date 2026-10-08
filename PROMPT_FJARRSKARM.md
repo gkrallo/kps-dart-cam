@@ -52,8 +52,9 @@ Dessa är hämtade ur projektets egna README och gäller för allt du bygger:
 - **Ingenting under spelets gång ska kräva att man rör kameraenheten.** Varje
   tryck på den är en chans att knuffa stativet. Det är hela motivet för
   funktionen.
-- **Fortsatt GitHub Pages.** Base path `/kps-dart-cam/`, statisk hosting, inga
-  serverfunktioner. Om något i din plan kräver annan hosting är planen fel.
+- **Statisk hosting på Netlify** (sedan 2026-10, tidigare GitHub Pages). Base
+  path `/`, inga serverfunktioner - Netlify Functions används inte. Om något
+  i din plan kräver en server är planen fel.
 
 ---
 
@@ -296,8 +297,8 @@ oberoende av resten — gör den först och som separat commit.
   Strategin är cache-first: allt är statiskt, det finns inga API-anrop att hålla
   färska.
 - **Base path.** Både service workerns scope och precache-URL:erna måste följa
-  Vites `base` (`/kps-dart-cam/`). Verifiera i deployad version att den
-  faktiskt registreras och cachar — detta är den vanligaste fällan med Pages.
+  Vites `base` (`/` hos Netlify). Verifiera i deployad version att den
+  faktiskt registreras och cachar — fel scope är den vanligaste fällan.
 - **Uppdateringar: fråga, ladda aldrig om automatiskt.** Visa en diskret rad
   "Ny version finns — ladda om?" och låt användaren välja tidpunkt. Appen
   återupptar redan sparade matcher, så en omladdning är överlevbar, men den ska

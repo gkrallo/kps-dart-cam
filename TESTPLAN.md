@@ -123,7 +123,7 @@ körde. Gör det här varje gång.
 2. **Stativ.** Handhållet överskrider rörelsetröskeln konstant.
 3. **Bara EN Chrome-flik** med appen. En kvarglömd flik stjäl kameran tyst.
 4. **Rätt bygge.** Efter push tar Pages ~2 min. Kontrollera hashen:
-   `curl -s https://gkrallo.github.io/kps-dart-cam/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'`
+   `curl -s https://kps-dart-cam.netlify.app/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'`
    och jämför med det fliken kör. Ladda om med `reload.mjs` om de skiljer sig.
 5. **`?debug&mask` i URL:en.** Utan `debug` loggar detektorn ingenting.
 6. **Videon rullar.** `phone:check` mäter att `video.currentTime` ökar.
