@@ -442,6 +442,30 @@ export const useDartDetector = (
     let lastDiag = ''; // siffrorna bakom senaste blobbeslutet (?debug)
     let frameCount = 0;
     let lastRegisterTime = 0; // tidsspärr mot dubbeldetektering av samma pil
+    /**
+     * Rå-trigger: den warpade bilden täcker bara tavlans kvadrat (±170 mm),
+     * och en pil i övre dubbeln som lutar utåt ligger nästan helt UTANFÖR
+     * den - bara spetsen syns, långt under baselineNoise-gränsen 500.
+     * Uppmätt 2026-10-08: en D20 i ytterkanten gav ingen analys alls och
+     * missades tyst. Var tredje lugn bildruta räknas därför också skillnaden
+     * i råbilden mot toppen av stacken; där syns hela pilen (7 000+ px).
+     * Var tredje för att spara tid - telefonen går i ~6 fps.
+     */
+    let rawTriggerTick = 0;
+    let rawTriggerPending = false;
+    const RAW_TRIGGER_PX = 2500;
+    /**
+     * Rå skillnad som fanns kvar efter förra analysen. En avvisad blobb
+     * absorberas inte alltid (nivå 0 skyddas medan något sitter i tavlan),
+     * och utan golv skulle samma blobb analyseras om varje sekund. Följer
+     * minimum nedåt, så att en registrering som sänker skillnaden sänker golvet.
+     */
+    let rawFloorPx = 0;
+    const measureRaw = (): number => {
+      cv.absdiff(rawGray, snapshots[snapshots.length - 1], rawDiff);
+      cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+      return cv.countNonZero(rawThresh);
+    };
 
     // ~13 mm i den warpade bilden (2.3529 px/mm). Under det är "ny pil" troligen
     // samma pil igen.
@@ -1544,6 +1568,14 @@ const STARTUP_GRACE_MS = 2000;
       const dartsThisCycle = snapshots.length - 1;
 
       if (movementNoise > motionThresholdRef.current) {
+        rawTriggerPending = false;
+      } else if (baselineNoise <= 500 && snapshots.length > 0 && ++rawTriggerTick % 3 === 0) {
+        const n = measureRaw();
+        if (n < rawFloorPx) rawFloorPx = n;
+        rawTriggerPending = n > rawFloorPx + RAW_TRIGGER_PX;
+      }
+
+      if (movementNoise > motionThresholdRef.current) {
         lastMotionTime = now;
         isStabilizing = true;
         state = 'MOTION';
@@ -1553,7 +1585,7 @@ const STARTUP_GRACE_MS = 2000;
         // armen i (70 000 px) så fort spelaren stått vid tavlan längre än så,
         // och en skräpblobb registrerades.
         hugeSince = 0;
-      } else if (baselineNoise > 500) {
+      } else if (baselineNoise > 500 || rawTriggerPending) {
         if (!isStabilizing) {
           isStabilizing = true;
           lastMotionTime = now;
@@ -1561,6 +1593,10 @@ const STARTUP_GRACE_MS = 2000;
         if (now - lastMotionTime > 500) {
           isStabilizing = false;
           state = 'ANALYZING';
+          // Analysen nedan uppdaterar toppen av stacken (registrerad pil,
+          // eller avvisad blobb som absorberas); nästa rå-mätning avgör om
+          // något fortfarande skiljer sig.
+          rawTriggerPending = false;
           let skipped = false;
           if (now - startedAt > STARTUP_GRACE_MS) {
             skipped = analyseChange() === 'skip';
@@ -1571,7 +1607,10 @@ const STARTUP_GRACE_MS = 2000;
           // Vid uppskjuten analys lämnas referensen orörd, så att
           // baselineNoise fortsätter trigga och bilden analyseras om när
           // föremålet är borta.
-          if (!skipped) gray.copyTo(baseline);
+          if (!skipped) {
+            gray.copyTo(baseline);
+            if (snapshots.length > 0) rawFloorPx = measureRaw();
+          }
         } else {
           state = 'STABILIZING';
         }
