@@ -15,6 +15,15 @@ import {
 import type { ZoomCapability } from './CameraFeed';
 import { Sparkles, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Focus, ZoomIn, CheckCircle2, SlidersHorizontal, X, RotateCcw, Crosshair, Target, SkipForward, Compass, MoreHorizontal } from 'lucide-react';
 
+/** ?debug: kalibreringskontrollens steg, prefix [kal] för loggströmmen. */
+const calLog = (msg: string, data?: unknown) => {
+  try {
+    if (new URLSearchParams(window.location.search).has('debug')) console.log(`[kal] ${msg}`, data ?? '');
+  } catch {
+    /* diagnostik */
+  }
+};
+
 interface CalibrationOverlayProps {
   containerWidth: number;
   containerHeight: number;
@@ -61,6 +70,12 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   const restoredCheckedRef = useRef(false);
   /** Punkterna som återställdes - har användaren hunnit ändra dem hoppar kontrollen över. */
   const restoredPointsRef = useRef<Point[] | null>(null);
+  /**
+   * Ökas när en kalibrering återställs, så att kontrollen nedan körs även om
+   * containerns storlek (och därmed återställningen) kom EFTER kameran och
+   * OpenCV - då ändras inget av kontrollens andra beroenden.
+   */
+  const [restoredTick, setRestoredTick] = useState(0);
 
   // "Sikte"-steget körs bara före punktplacering. Telefonen sitter fast på
   // stativ, så appen kan inte rikta om sig själv - det användaren GÖR är att
@@ -116,6 +131,8 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       if (restored) {
         restoredRef.current = true;
         restoredPointsRef.current = restored;
+        setRestoredTick((t) => t + 1);
+        calLog('återställd', restored);
         setCalibrationStep('punkter');
         setDetectStatus('Sparad kalibrering återställd - kontrollerar den mot tavlan...');
       }
@@ -133,8 +150,13 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
    * om videoWidth var 0 och räknade med att effekten skulle köras igen - men
    * inget beroende ändras när videon blir klar, så kontrollen kördes aldrig
    * (sett på telefonen 2026-10-06: meddelandet "kontrollerar..." låg kvar).
+   *
+   * 2026-10-08 syntes ingenting alls, inte ens "kontrollerar...", spårat
+   * inifrån sidan. Orsaken är inte fastställd; ?debug loggar nu varje steg
+   * med prefixet [kal] så att det syns i loggströmmen nästa gång.
    */
   useEffect(() => {
+    calLog('kontroll-effekt', { restored: restoredRef.current, checked: restoredCheckedRef.current, cv: !!cv, video: !!videoElement });
     if (!restoredRef.current || restoredCheckedRef.current) return;
     if (!cv || !videoElement) return;
     let runTimer: number | undefined;
@@ -142,16 +164,31 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       if (restoredCheckedRef.current) return;
       restoredCheckedRef.current = true;
       let pts = pointsRef.current;
-      if (pts.length !== 4) return;
-      // Har användaren redan dragit en punkt eller tryckt Auto gäller deras val.
-      if (pts !== restoredPointsRef.current) {
+      if (pts.length !== 4) {
+        calLog('kontroll avbruten: punkter saknas', pts.length);
+        return;
+      }
+      // Har användaren redan dragit en punkt eller tryckt Auto gäller deras
+      // val. Jämförs på koordinater, inte identitet: samma punkter i en ny
+      // array (en omrendering, en zoomskalning med faktor 1) är inte en ändring.
+      const orig = restoredPointsRef.current;
+      const moved = !orig || orig.some((p, i) => Math.hypot(p.x - pts[i].x, p.y - pts[i].y) > 3);
+      if (moved) {
+        calLog('kontroll hoppad över: punkterna har ändrats', { orig, pts });
         setDetectStatus(null);
         return;
       }
-      const align = alignSectorsToBoard(cv, videoElement, pts, containerWidth, containerHeight);
-      if (align) pts = align.points;
-      const refined = refineCalibrationToRings(cv, videoElement, pts, containerWidth, containerHeight);
-      if (refined) pts = refined.points;
+      let align: ReturnType<typeof alignSectorsToBoard> = null;
+      let refined: ReturnType<typeof refineCalibrationToRings> = null;
+      try {
+        align = alignSectorsToBoard(cv, videoElement, pts, containerWidth, containerHeight);
+        if (align) pts = align.points;
+        refined = refineCalibrationToRings(cv, videoElement, pts, containerWidth, containerHeight);
+        if (refined) pts = refined.points;
+      } catch (err) {
+        console.error('Kontrollen av sparad kalibrering misslyckades:', err);
+      }
+      calLog('kontroll klar', { align: !!align, refined: !!refined });
       if (align || refined) {
         setPoints(pts);
         onPointsChange(pts);
@@ -164,13 +201,14 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
     const poll = window.setInterval(() => {
       if (videoElement.videoWidth === 0 || runTimer !== undefined) return;
       window.clearInterval(poll);
+      calLog('video klar, kontroll om 2,5 s');
       runTimer = window.setTimeout(run, 2500);
     }, 250);
     return () => {
       window.clearInterval(poll);
       if (runTimer !== undefined) window.clearTimeout(runTimer);
     };
-  }, [cv, videoElement]);
+  }, [cv, videoElement, restoredTick]);
 
   // Delad detekteringslogik: ellipsmetoden klarar sneda kameravinklar;
   // HoughCircles (cirkel-antagande) är fallback om färgsegmenteringen inte

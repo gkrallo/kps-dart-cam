@@ -15,6 +15,12 @@ interface ScoreboardProps {
   showManualNext?: boolean;
   onEditThrow: (actionIndex: number, seg: Seg) => void;
   onDeleteThrow: (actionIndex: number) => void;
+  /**
+   * Lägg till en pil som appen missade, sist i den pågående turen. Nås via
+   * nästa tomma ruta i pilraden - förut fanns det bara under Turer och +,
+   * vilket var för krångligt mitt i en tur (Kristian 2026-10-08).
+   */
+  onAddThrow?: (seg: Seg) => void;
   onNewGame: () => void;
   isCalibrated: boolean;
   onCalibrateClick: () => void;
@@ -40,6 +46,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   showManualNext = false,
   onEditThrow,
   onDeleteThrow,
+  onAddThrow,
   onNewGame,
   isCalibrated,
   onCalibrateClick,
@@ -55,6 +62,7 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   onDismissMissedDarts,
 }) => {
   const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
 
   if (!isCalibrated || !match) return null;
 
@@ -66,6 +74,17 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
 
   return (
     <div className="bg-slate-900 border-t border-slate-800 shadow-[0_-10px_30px_rgba(0,0,0,0.6)] p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3 z-10 select-none">
+      {adding && onAddThrow && (
+        <ThrowEditor
+          current={null}
+          onApply={(seg) => {
+            onAddThrow(seg);
+            setAdding(false);
+          }}
+          onClose={() => setAdding(false)}
+        />
+      )}
+
       {editIdx !== null && (
         <ThrowEditor
           current={editingEntry ? editingEntry.dart : null}
@@ -131,21 +150,31 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
               const dart = currentDarts[index];
               const ai = turnLog[index]?.ai;
               const unsure = !!turnLog[index]?.alt?.length;
+              // Nästa tomma ruta: tryck för att lägga till en pil som missades.
+              const canAdd = !dart && index === currentDarts.length && !!onAddThrow && !match.finished;
               return (
                 <button
                   key={index}
-                  disabled={dart === undefined}
-                  onClick={() => ai !== undefined && setEditIdx(ai)}
+                  disabled={dart === undefined && !canAdd}
+                  onClick={() => (canAdd ? setAdding(true) : ai !== undefined && setEditIdx(ai))}
+                  title={
+                    canAdd
+                      ? 'Lägg till en pil som appen missade'
+                      : unsure
+                        ? 'Satt nära gränsen – tryck för att rätta'
+                        : undefined
+                  }
                   className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl border flex flex-col items-center justify-center font-bold shadow-sm transition-all ${
                     dart
                       ? unsure
                         ? 'bg-slate-800 border-amber-400 text-amber-300 active:scale-95'
                         : 'bg-slate-800 border-blue-500/50 text-blue-400 active:scale-95'
-                      : 'bg-slate-950/60 border-slate-800 text-slate-700'
+                      : canAdd
+                        ? 'bg-slate-950/60 border-dashed border-slate-600 text-slate-500 active:scale-95'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-700'
                   }`}
-                  title={unsure ? 'Satt nära gränsen – tryck för att rätta' : undefined}
                 >
-                  <span className="text-xs sm:text-sm">{dart ? segLabel(dart) + (unsure ? '?' : '') : '–'}</span>
+                  <span className="text-xs sm:text-sm">{dart ? segLabel(dart) + (unsure ? '?' : '') : canAdd ? '+' : '–'}</span>
                   {dart && <span className="text-[8px] text-slate-500">{segScore(dart)}p</span>}
                 </button>
               );

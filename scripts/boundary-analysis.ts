@@ -41,7 +41,12 @@ for (const a of env.match.actions) {
 }
 const corr = JSON.parse(ls['kps-dart-cam:corrections:v1'] ?? '[]');
 for (const c of corr) {
-  if (c.kind !== 'edit' || !c.detected) continue;
+  if ((c.kind !== 'edit' && c.kind !== 'confirm') || !c.detected) continue;
+  // En bekräftelse är ett flaggat kast som var rätt: med i räkningen, men inte som rättning.
+  if (c.kind === 'confirm') {
+    rows.push({ seen: c.detected.label, truth: null, ...boundary(c.detected.rMM, c.detected.deg) });
+    continue;
+  }
   const to = c.to ?? c.corrected;
   rows.push({ seen: c.detected.label, truth: to ? JSON.stringify(to) : '?', ...boundary(c.detected.rMM, c.detected.deg) });
 }

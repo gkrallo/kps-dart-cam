@@ -4,7 +4,7 @@
 > vidare" verifierade i spel. Fem av felen är två pilar som blir en form i
 > bild - det byggs offline mot kvällens bildpar. **Nästa pass:** samma sak
 > igen när det är byggt; särskilt ny pil tätt intill en gammal, uttag av den
-> lästa pilen ur en sammansmält form, och en pil som faller långsamt.
+> lästa pilen ur en sammansmält form, och den tomma rutan i pilraden.
 
 > **Hel 501-match 2026-10-06** (`GRANSKNING.md` avsnitt 11): 64 avläsningar,
 > 5 rättade, varav 3 gränsfall under 1 mm. Nio rättningar gjordes under

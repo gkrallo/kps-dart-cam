@@ -718,7 +718,7 @@ glappade en gång (CDP-anropen tog ~20 s styck tills den sattes om).
 | Ny pil över en gammal vinge | Rund klump (233×159 px), ingen axel - avstod |
 | Ny pil som knuffade den gamla | 82 % "fanns före", 14 % "lämnat tomt" → avvisad som "pil som rört sig". Referensen fick sedan med den, och omkastet gav ingen analys |
 | Uttag av den lästa pilen ur en sammansmält form | Självrättningen tog den kvarvarande pilen för samma pil omläst: "Rättar 1 blir 20" i stället för att lägga till 20 |
-| Pil som föll långsamt | Registrerades tre gånger medan den gled ner: Miss 187 mm, S20 133 mm, T5 107 mm |
+| Byte av spelare mitt i en Farfar-tur | Spelare 1 hade 8 pilar och 25 av 30 efter tre kast; Spelare 2 kastade, och hans 15 hittades vid uttaget som "dold pil" i Spelare 1:s tur. Inget detektorfel - jag tolkade det först som en fallande pil som registrerats tre gånger, men Miss/20/5 var Spelare 1:s riktiga kast |
 | Omläsning av samma pil 27 px bort | Avstämningen (25 px) tappade den och la in den igen som "dold pil" |
 | T1 läst som S1 | Spetsen 97 mm, trippeln börjar 99 - 2 mm för långt in, "delar=2" (stålspetsen saknades troligen i masken) |
 | S7 på 26 mm, sanningen 16 | Konfidens 0,41, 377 konturer - brokig mask, 1,4 mm från tråden |
@@ -734,7 +734,7 @@ alls på telefonen, inte ens "kontrollerar..." (spårat inifrån sidan med
 100 ms upplösning). Misstanke: spärren "användaren har ändrat punkterna"
 slår till direkt och tömmer statusraden.
 
-**Att göra, i ordning:** (1) sammansmälta pilar via ytan över tid, (2) en
-pil som byter plats inom ~2 s är samma pil, (3) tom ruta i pilraden ska gå
-att trycka på för att lägga till en pil, (4) logga bekräftelser,
-(5) kalibreringskontrollen vid start.
+**Att göra, i ordning:** (1) sammansmälta pilar via ytan över tid, (2) tom
+ruta i pilraden ska gå att trycka på för att lägga till en pil, (3) logga
+bekräftelser, (4) kalibreringskontrollen vid start, (5) en ny pil som
+knuffar en gammal ska inte avvisas som "pil som rört sig".

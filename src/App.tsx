@@ -7,7 +7,7 @@ import { Point } from './types';
 import { useDartDetector, type DetectorDebug } from './hooks/useDartDetector';
 import { useMatch } from './hooks/useMatch';
 import { getScoreFromPixel, nearbyScores, pixelToCanonical } from './utils/dartMath';
-import type { DetectionMeta } from './game/types';
+import type { DetectionMeta, Seg } from './game/types';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
@@ -111,6 +111,14 @@ export default function App() {
    * Nollställs när tavlan töms.
    */
   const visitActionsRef = useRef(new Map<number, number>());
+  /**
+   * Pilar som lagts in för hand sedan tavlan senast tömdes. En pil som
+   * missades för att den satt ihop med en annan kan hittas av detektorn när
+   * grannen dras ut - och har spelaren redan lagt in den blir den annars
+   * dubbel. Så länge det finns en handinlagd pil i omgången antas en
+   * avslöjad pil vara just den.
+   */
+  const manualAddsRef = useRef(0);
 
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
   // Matrisen ligger i state, inte i en ref: den gamla varianten lästes under
@@ -161,6 +169,7 @@ export default function App() {
     setShowManualNext(false);
     setMissedDarts(null);
     dartsSinceClearRef.current = 0;
+    manualAddsRef.current = 0;
   }, [match?.id]);
 
   // Avslutas matchen (eller startas en ny) ska uppstartsskärmen upp igen.
@@ -260,6 +269,7 @@ export default function App() {
   const handleBoardCleared = useCallback(() => {
     const readThisVisit = dartsSinceClearRef.current;
     dartsSinceClearRef.current = 0;
+    manualAddsRef.current = 0;
     visitActionsRef.current.clear();
     setAwaitingRetrieval(false);
     setShowManualNext(false);
@@ -371,6 +381,14 @@ export default function App() {
     const scoreObj = getScoreFromPixel(pt.x, pt.y);
     const seg = segFromDartScore(scoreObj);
 
+    if (manualAddsRef.current > 0) {
+      manualAddsRef.current -= 1;
+      audioEngine.speak(`Pilen i ${audioEngine.scoreText(scoreObj.label, scoreObj.totalPoints)} är redan inlagd.`);
+      setLastScoredDartLabel(`Redan inlagd: ${scoreObj.label}`);
+      window.setTimeout(() => setLastScoredDartLabel(null), 3000);
+      return;
+    }
+
     // Ställningen med: i Farfar är turen redan stängd när en pil saknas, och
     // då måste pilen in före den som stängde turen - inte hos nästa spelare.
     const at = insertIndexForRevealedThrow(match.actions, matchState(match));
@@ -435,6 +453,24 @@ export default function App() {
       audioEngine.speak('Kameran ser en annan bild än vid kalibreringen. Kontrollera telefonen och kalibrera om.');
     }
   }, []);
+
+  /**
+   * En pil som läggs in för hand (Turer, eller den tomma rutan i pilraden).
+   * Hamnar den i den pågående turen räknas den mot `manualAddsRef`, så att
+   * detektorn inte lägger in samma pil igen om den hittas vid uttagningen.
+   */
+  const handleManualInsert = useCallback(
+    (actionIndex: number, seg: Seg): boolean => {
+      if (!match) return false;
+      const st = matchState(match);
+      const turnStart =
+        st.currentDarts.length > 0 ? st.log[st.log.length - st.currentDarts.length].ai : match.actions.length;
+      const ok = insertMissingThrow(actionIndex, seg);
+      if (ok && actionIndex >= turnStart) manualAddsRef.current += 1;
+      return ok;
+    },
+    [match, insertMissingThrow],
+  );
 
   /**
    * En pil föll ur tavlan strax efter att den registrerats. Enligt reglerna
@@ -654,7 +690,7 @@ export default function App() {
           match={state}
           onEditThrow={editThrow}
           onDeleteThrow={deleteThrow}
-          onInsertThrow={insertMissingThrow}
+          onInsertThrow={handleManualInsert}
           onClose={() => {
             setShowHistory(false);
             setMissedDarts(null);
@@ -812,6 +848,7 @@ export default function App() {
         onFinishTurn={handleManualFinish}
         onEditThrow={editThrow}
         onDeleteThrow={deleteThrow}
+        onAddThrow={(seg) => match && handleManualInsert(match.actions.length, seg)}
         // Bara öppna inställningarna. Matchen raderas först när en ny startas
         // (start() ersätter den), så en feltryckning går att backa ur.
         onNewGame={() => setShowSetup(true)}

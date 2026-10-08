@@ -338,6 +338,12 @@ export const useDartDetector = (
      * `MaterialDelta` i dartCensus.ts. -1 = ingen mätning gjord än.
      */
     let lastEmptyDiffPx = -1;
+    /**
+     * Hur mycket materialet minskade vid den senaste avstämningen, i pixlar
+     * (negativt = ökade). 0 när det inte gick att mäta. Se självrättningen i
+     * actOnCensus för varför storleken behövs och inte bara riktningen.
+     */
+    let censusDropPx = 0;
     const forgetDart = (index: number) => {
       if (rawTips[index]) recentlyForgotten.push({ tip: rawTips[index], at: performance.now() });
       rawTips.splice(index, 1);
@@ -1022,11 +1028,13 @@ const STARTUP_GRACE_MS = 2000;
       const savedRect = lastBlobRect;
       let found: TipFind[] = [];
       let delta: MaterialDelta = 'unknown';
+      censusDropPx = 0;
       try {
         cv.absdiff(rawGray, empty, censusDiff);
         cv.threshold(censusDiff, censusThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
         // Riktningen mäts FÖRE findDartTips, som kör morfologi på masken.
         const emptyPx = cv.countNonZero(censusThresh);
+        censusDropPx = lastEmptyDiffPx >= 0 ? lastEmptyDiffPx - emptyPx : 0;
         if (lastEmptyDiffPx >= 0) {
           // Samma areagolv som för en pilblob: mindre än så är brus, inte pil.
           const step = frameArea * 0.0002;
@@ -1112,6 +1120,21 @@ const STARTUP_GRACE_MS = 2000;
           const moved = Math.hypot(tip.x - old.x, tip.y - old.y);
           const oldScore = getScoreFromPixel(old.x, old.y);
           const newScore = getScoreFromPixel(tip.x, tip.y);
+          // Minskade materialet med ungefär en pil samtidigt, drogs en pil UT -
+          // och har spetsen flyttat sig är det den registrerade som drogs ut,
+          // inte en okänd. Det som står kvar är då en ANNAN pil, som satt så
+          // tätt intill att de var en form i bild och hopparades som en.
+          // Uppmätt 2026-10-08: pil 1 (1) lästes, pil 2 (20) ~6 mm bort
+          // missades; Kristian drog ut ettan för att avslöja tjugan, och
+          // självrättningen sa "1 blir 20" - en pil i stället för två.
+          // Gränsen 0,4 pilar: en hel pil ger ~1 pils minskning, brus och
+          // ljusdrift några hundra pixlar.
+          if (moved >= 8 && censusDropPx >= 0.4 * dartAreas[0]) {
+            return revealDart(f, [0], {
+              ignoreForgotten: true,
+              label: `pil som satt ihop med den uttagna (materialet minskade ${censusDropPx | 0} px, spetsen flyttad ${moved | 0} px)`,
+            });
+          }
           if (
             ratio > 0.6 &&
             ratio < 1.6 &&
@@ -1175,14 +1198,31 @@ const STARTUP_GRACE_MS = 2000;
       // bakom den som just drogs ut. Samma spärrar som den gamla grenen -
       // ett felaktigt insatt kast ändrar ställningen tyst, så hellre missa en
       // dold pil än hitta på en.
-      const revealed = seenDarts[verdict.seenIndex];
-      const idx = [...verdict.knownIndexes].sort((a, b) => b - a);
+      return revealDart(seenDarts[verdict.seenIndex], verdict.knownIndexes, {
+        ignoreForgotten: false,
+        label: `DOLD PIL avslöjad vid uttagning (avstämt, ${seenDarts[verdict.seenIndex]?.how ?? '-'})`,
+      });
+    };
+
+    /**
+     * Glömmer de uttagna pilarna och registrerar `revealed` som en pil vi
+     * aldrig sett förut, om den klarar spärrarna. `ignoreForgotten` släpper
+     * spärren mot nyss glömda pilar - bara när något annat (en uppmätt
+     * materialminskning) redan visat att det är en annan pil.
+     */
+    const revealDart = (
+      revealed: TipFind | undefined,
+      knownIndexes: number[],
+      opts: { ignoreForgotten: boolean; label: string },
+    ): boolean => {
+      const idx = [...knownIndexes].sort((a, b) => b - a);
       for (const i of idx) forgetDart(i);
 
       const tip = revealed ? warpPoint(revealed.tip) : null;
       const outsideBoard =
         !!tip && Math.hypot(tip.x - BOARD_PX / 2, tip.y - BOARD_PX / 2) > BOARD_PX * 0.55;
-      const forgotten = !!revealed && nearRecentlyForgotten(revealed.tip, performance.now());
+      const forgotten =
+        !opts.ignoreForgotten && !!revealed && nearRecentlyForgotten(revealed.tip, performance.now());
       // Hål eller pil avgörs på innehållet (materialFraction), inte på
       // avståndet till kända pilar: två pilar sitter ofta tätare än 13 mm.
       const isHole = !!revealed && materialFraction(revealed) < MATERIAL_MIN_FRACTION;
@@ -1199,7 +1239,7 @@ const STARTUP_GRACE_MS = 2000;
         dartsThisVisit++;
         syncSnapshots();
         lastDiag = revealed!.diag;
-        lastAnalysis = `DOLD PIL avslöjad vid uttagning (avstämt, ${revealed!.how})`;
+        lastAnalysis = opts.label;
         for (let k = 0; k < idx.length; k++) onDartRemovedRef.current?.();
         onHiddenDartRevealedRef.current?.(tip, seq, { how: revealed!.how, diag: revealed!.diag });
         return true;

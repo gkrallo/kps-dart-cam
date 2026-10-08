@@ -24,7 +24,13 @@ export type CorrectionKind =
   /** Avläst kast borttaget (spökkast). */
   | 'delete'
   /** Kast som aldrig lästes av, inlagt för hand. */
-  | 'missed';
+  | 'missed'
+  /**
+   * Osäkert kast (nära en gräns, `DetectionMeta.alt`) som spelaren öppnade
+   * och valde SAMMA värde för: avläsningen var rätt. Behövs för att kunna
+   * räkna hur ofta flaggan pratar i onödan - utan dem syns bara felen.
+   */
+  | 'confirm';
 
 export interface CorrectionEntry {
   /** ms sedan epoch. */

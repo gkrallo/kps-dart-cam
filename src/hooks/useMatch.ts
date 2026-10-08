@@ -141,10 +141,13 @@ export function useMatch() {
   ) => {
     const old = m.actions[actionIndex];
     if (!old || old.t !== 'T') return;
-    if (to && old.v === to.v && old.m === to.m) return; // ingen ändring
+    const same = !!to && old.v === to.v && old.m === to.m;
+    // Samma värde är ingen rättning - utom på ett flaggat kast, där det är en
+    // bekräftelse av att avläsningen var rätt (se CorrectionKind 'confirm').
+    if (same && !old.d?.alt?.length) return;
     appendCorrection({
       at: Date.now(),
-      kind,
+      kind: same ? 'confirm' : kind,
       source,
       matchId: m.id,
       mode: m.config.mode,
