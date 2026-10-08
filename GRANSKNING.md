@@ -690,3 +690,51 @@ kamera, inte något att kalibrera bort.
 2. Utfallet "pil föll ur" i spel.
 3. Om flaggan pratar för mycket. 1 av 6 kast är mycket om de flesta ändå
    blir rätt.
+
+## 12. Testpass 2026-10-08: Farfar
+
+Två hela Farfar-matcher och en påbörjad. Kristian kastade för två spelare
+och sa facit. Kalibrering med Auto, som satt på första försöket. USB-sladden
+glappade en gång (CDP-anropen tog ~20 s styck tills den sattes om).
+
+**Verifierat i spel:**
+
+- **Osäkerhetsflaggan.** Fångade tre riktiga gränsfel: 7→19 på 0,05 mm,
+  13→4 och 2→15 på 0,05 mm. Ingen pil på en tråd lästes fel utan "eller".
+  Flera flaggade pilar var rätt; de loggas inte (en bekräftelse med samma
+  värde räknas inte som rättning), så träffsäkerheten går inte att räkna.
+- **"Kasta vidare, N pilar kvar"** (`d95304d`, byggt under passet). Med
+  sparade pilar hämtar man sina tre mitt i turen; förut kom "bara 3 av 6
+  pilar avlästa" varje gång. Fungerade utmärkt.
+- **Pil som föll ur innan analysen** registrerades inte alls - rätt.
+- **grab.mjs med detektorns indata.** Sju felfall sparade med referensbilder
+  (`capture/2026-10-08/`). Hämtningen fick göras om i bitar om 512 kB.
+
+**Fel, med bildpar:**
+
+| Fall | Vad som hände |
+|---|---|
+| Ny pil ~10 mm från en gammal | En form, 1,27× en pils yta (spärren för "två pilar ihop" kräver 1,5×). Kopplades ihop med den gamla spetsen, den nya missades |
+| Ny pil över en gammal vinge | Rund klump (233×159 px), ingen axel - avstod |
+| Ny pil som knuffade den gamla | 82 % "fanns före", 14 % "lämnat tomt" → avvisad som "pil som rört sig". Referensen fick sedan med den, och omkastet gav ingen analys |
+| Uttag av den lästa pilen ur en sammansmält form | Självrättningen tog den kvarvarande pilen för samma pil omläst: "Rättar 1 blir 20" i stället för att lägga till 20 |
+| Pil som föll långsamt | Registrerades tre gånger medan den gled ner: Miss 187 mm, S20 133 mm, T5 107 mm |
+| Omläsning av samma pil 27 px bort | Avstämningen (25 px) tappade den och la in den igen som "dold pil" |
+| T1 läst som S1 | Spetsen 97 mm, trippeln börjar 99 - 2 mm för långt in, "delar=2" (stålspetsen saknades troligen i masken) |
+| S7 på 26 mm, sanningen 16 | Konfidens 0,41, 377 konturer - brokig mask, 1,4 mm från tråden |
+
+**Huvudsaken:** fem av felen är samma sak - två pilar som i bild blir en
+form. Signalen som saknas är formens yta över tid: drar man ut en pil ur en
+sammansmält form krymper den med en pils yta men försvinner inte. Då är
+den kvarvarande en ANNAN pil (ny pil, inte omläsning). Det löser både de
+missade tätt sittande pilarna och den felaktiga självrättningen.
+
+**Inte löst:** kontrollen av sparad kalibrering vid start visar ingenting
+alls på telefonen, inte ens "kontrollerar..." (spårat inifrån sidan med
+100 ms upplösning). Misstanke: spärren "användaren har ändrat punkterna"
+slår till direkt och tömmer statusraden.
+
+**Att göra, i ordning:** (1) sammansmälta pilar via ytan över tid, (2) en
+pil som byter plats inom ~2 s är samma pil, (3) tom ruta i pilraden ska gå
+att trycka på för att lägga till en pil, (4) logga bekräftelser,
+(5) kalibreringskontrollen vid start.
