@@ -106,26 +106,40 @@ await main(async () => {
     // gråskala NU, toppen av stacken och tom tavla - exakt det absdiff fick.
     // Utan dem går ett felfall inte att köra om; bildrutan visar bara läget
     // efteråt. Sparas som rå .gray (w*h byte) + en PNG att titta på.
+    // Hämtas i bitar om 512 kB: allt i ett anrop (~25 MB base64) gick inte
+    // igenom inom CDP:s tidsgräns 2026-10-08. Ringen fryses först, så att en
+    // ny analys mitt i hämtningen inte blandar ihop bilderna.
     const analyses = await session.evaluate(`
       (() => {
-        const ring = window.__analysisFrames ?? [];
-        const b64 = (u8) => {
-          let s = '';
-          for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
-          return btoa(s);
-        };
-        return ring.map((r) => ({
-          at: r.at, w: r.w, h: r.h, line: r.line, tips: r.tips,
-          cur: b64(r.cur), top: b64(r.top), empty: b64(r.empty),
-        }));
+        window.__grabRing = (window.__analysisFrames ?? []).slice();
+        return window.__grabRing.map((r) => ({ at: r.at, w: r.w, h: r.h, line: r.line, tips: r.tips }));
       })()
     `);
+    const CHUNK = 512 * 1024;
+    const fetchImage = async (i, k) => {
+      const parts = [];
+      for (let off = 0; ; off += CHUNK) {
+        const b64 = await session.evaluate(`
+          (() => {
+            const u8 = window.__grabRing[${i}].${k}.subarray(${off}, ${off + CHUNK});
+            if (u8.length === 0) return null;
+            let s = '';
+            for (let j = 0; j < u8.length; j += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(j, j + 0x8000));
+            return btoa(s);
+          })()
+        `);
+        if (!b64) break;
+        parts.push(Buffer.from(b64, 'base64'));
+      }
+      return Buffer.concat(parts);
+    };
     let analysisCount = 0;
-    for (const [i, a] of (analyses ?? []).entries()) {
+    // Senaste analysen först: det är nästan alltid den som gick fel.
+    for (const [i, a] of [...(analyses ?? []).entries()].reverse()) {
       const sub = `${dir}/analys-${i + 1}`;
       mkdirSync(sub, { recursive: true });
       for (const k of ['cur', 'top', 'empty']) {
-        const buf = Buffer.from(a[k], 'base64');
+        const buf = await fetchImage(i, k);
         writeFileSync(`${sub}/${k}.gray`, buf);
         writeFileSync(`${sub}/${k}.png`, grayPng(buf, a.w, a.h));
       }

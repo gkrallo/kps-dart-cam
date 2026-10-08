@@ -326,11 +326,22 @@ export default function App() {
       // motorn redan avslutat turen och pilar lästes av var allt som det ska -
       // då ska ingen varning komma.
       const halfDone = st.currentDarts.length > 0;
-      if (halfDone || readThisVisit === 0) {
-        const read = halfDone ? st.currentDarts.length : 0;
-        setMissedDarts({ playerName: st.active.name, read, expected: v.available });
+      // Har spelaren sparat pilar räcker inte tre pilar till hela turen: man
+      // hämtar sina tre och fortsätter. En sådan tömning mitt i turen är
+      // alltså normal, inte en missad pil - så länge alla pilar i omgången
+      // lästes (tre, eller det som fanns kvar). Förut kom "bara 3 av 6 pilar
+      // avlästa" varje gång (2026-10-08, första Farfar-matchen).
+      const physicalThisVisit = Math.min(3, readThisVisit + v.dartsLeft);
+      if (halfDone && v.dartsLeft > 0 && readThisVisit >= physicalThisVisit) {
+        audioEngine.speak(`Kasta vidare, ${st.active.name}. ${v.dartsLeft} pilar kvar.`);
+      } else if (halfDone || readThisVisit === 0) {
+        // Räknat på omgången vid tavlan, inte hela turen: med sparade pilar
+        // säger "2 av 6" ingenting om vilken omgång pilen saknas i.
+        const read = halfDone ? readThisVisit : 0;
+        const expected = halfDone ? physicalThisVisit : Math.min(3, v.available);
+        setMissedDarts({ playerName: st.active.name, read, expected });
         audioEngine.speak(
-          `Obs: bara ${read} av ${v.available} pilar avlästa. Fyll i under Turer.`,
+          `Obs: bara ${read} av ${expected} pilar avlästa. Fyll i under Turer.`,
         );
       }
     }
