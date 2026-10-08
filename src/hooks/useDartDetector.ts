@@ -150,6 +150,11 @@ export const useDartDetector = (
     // WARPADE motsvarigheten och används till "tavlan tömd"-kollen.
     const censusDiff = new cv.Mat();
     const censusThresh = new cv.Mat();
+    // Var det redan satt material (toppen mot tom tavla) - för kastvägens
+    // andra försök, se findNewDartExcludingPrior.
+    const priorDiff = new cv.Mat();
+    const priorThresh = new cv.Mat();
+    const newOnly = new cv.Mat();
     const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
     // Referensbilderna (warpad bild, motion-grinden). VIKTIGT: uppdatera dem
     // med `gray.copyTo(baseline)`, ALDRIG `baseline = gray.clone()`. I den här
@@ -736,6 +741,37 @@ const STARTUP_GRACE_MS = 2000;
     /** Första kandidaten som duger. Kastlägets vanliga anrop. */
     const findDartTip = (threshMat: any, reference: any, frameArea: number): TipFind | null =>
       findDartTips(threshMat, reference, frameArea, 1)[0] ?? null;
+
+    /**
+     * Kastvägens andra försök: samma diff mot förra bilden, men utan de
+     * pixlar där det redan satt material (toppen skilde sig från tom tavla).
+     *
+     * Uppmätt 2026-10-08: en ny pil landade med vingen över en gammal pils
+     * vinge. Diffen blev den nya pilen PLUS den gamla vingen som skymts eller
+     * knuffats - en rund klump på 233×159 px där ingen axel gick att passa
+     * in, och pilen missades. Utan det gamla materialet är det den nya pilens
+     * pipa och spets som blir kvar, och de ligger på tom tavla. En knuffad
+     * pils remsa ligger däremot helt i det gamla materialet och försvinner,
+     * så försöket kan inte hitta på en pil ur en sådan.
+     */
+    const findNewDartExcludingPrior = (frameArea: number): TipFind | null => {
+      if (snapshots.length < 2) return null;
+      const top = snapshots[snapshots.length - 1];
+      const empty = snapshots[0];
+      cv.absdiff(top, empty, priorDiff);
+      cv.threshold(priorDiff, priorThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+      // Marginal runt det gamla materialet: kanterna flimrar mellan bilder.
+      cv.dilate(priorThresh, priorThresh, kernel, new cv.Point(-1, -1), 2);
+      cv.bitwise_not(priorThresh, priorThresh);
+      // rawThresh har redan körts genom morfologin av första försöket - räkna
+      // om den från rådiffen.
+      cv.absdiff(rawGray, top, rawDiff);
+      cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
+      cv.bitwise_and(rawThresh, priorThresh, newOnly);
+      const found = findDartTip(newOnly, top, frameArea);
+      if (found) found.how = `${found.how}, utan gammalt material`;
+      return found;
+    };
 
     /**
      * Prövar EN kontur: skuggtest, formtest och rimlig radie. Returnerar
@@ -1490,7 +1526,17 @@ const STARTUP_GRACE_MS = 2000;
       }
 
       // Vanligt nytt kast: mer material än toppen av stacken hade.
-      const found = findDartTip(rawThresh, top, frameArea);
+      let found = findDartTip(rawThresh, top, frameArea);
+      if (!found && !lightingShift) {
+        const firstRect = lastBlobRect;
+        const firstWhy = lastAnalysis;
+        found = findNewDartExcludingPrior(frameArea);
+        if (!found) {
+          // Absorbera det första försökets blobb, och behåll dess förklaring.
+          lastBlobRect = firstRect;
+          lastAnalysis = firstWhy;
+        }
+      }
       if (found) registerNewThrow(found);
       else if (lightingShift) absorbIntoTop(); // bestående ljusskifte: ta hela bilden
       else absorbBlobRegion(); // skugga/hand - bara blobbens yta
@@ -1782,7 +1828,7 @@ const STARTUP_GRACE_MS = 2000;
       [
         warped, gray, diff, thresh, diffPrev, threshPrev,
         rawGray, rawDiff, rawThresh, baseDiff, baseThresh, emptyDiff, emptyThresh,
-        censusDiff, censusThresh,
+        censusDiff, censusThresh, priorDiff, priorThresh, newOnly,
         kernel, baseline, previous, emptyBaseline,
       ].forEach((m) => m?.delete());
       snapshots.forEach((m) => m?.delete());
