@@ -63,6 +63,15 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
    * kan läsa sektorerna.
    */
   const [showMore, setShowMore] = useState<boolean>(false);
+  /**
+   * Handdragna punkter: stora handtag, punktflikarna och pilknapparna.
+   * Kristian 2026-10-08: "fyra ganska fula prickar" som inte behövts sedan
+   * Auto började finjustera mot ringarna. De finns kvar som reserv - under
+   * Mer, och öppnas av sig själva om Auto inte hittar tavlan - men i vanliga
+   * fall är punkterna bara små markeringar; det man ska döma av är de
+   * streckade sektorlinjerna.
+   */
+  const [manualMode, setManualMode] = useState<boolean>(false);
   const pointsRef = useRef<Point[]>([]);
   pointsRef.current = points;
   /** Återställd sparad kalibrering som ska kontrolleras mot tavlan en gång. */
@@ -439,6 +448,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
         }
       } else {
         setDetectStatus('Ingen tavla hittades. Rikta kameran mot tavlan, eller dra punkterna manuellt.');
+        setManualMode(true);
       }
 
       setIsDetecting(false);
@@ -797,8 +807,22 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
           className="pointer-events-none"
         />
 
-        {/* Draw interactive calibration nodes */}
-        {points.map((p, idx) => (
+        {/* Kalibreringspunkterna: små markeringar, handtag bara i handläget */}
+        {!manualMode &&
+          points.map((p, idx) => (
+            <circle
+              key={idx}
+              cx={p.x}
+              cy={p.y}
+              r={3.5}
+              fill="#ffffff"
+              fillOpacity={0.75}
+              stroke="#0f172a"
+              strokeWidth={1}
+              className="pointer-events-none"
+            />
+          ))}
+        {manualMode && points.map((p, idx) => (
           <g
             key={idx}
             transform={`translate(${p.x}, ${p.y})`}
@@ -873,6 +897,21 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
           {showMore && (
           <div className="w-full flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setManualMode((v) => !v);
+              setShowDpad(false);
+            }}
+            className={`active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border shadow-lg backdrop-blur-md transition-all ${
+              manualMode
+                ? 'bg-blue-600 text-white border-blue-400'
+                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+            }`}
+            title="Visa handtagen och dra punkterna själv"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Justera för hand</span>
+          </button>
           <button
             onClick={() => setAnchorMode((v) => !v)}
             className={`active:scale-95 px-2.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-1 border shadow-lg backdrop-blur-md transition-all ${
@@ -952,7 +991,7 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       </div>
 
       {/* POPUP D-PAD OVERLAY (Collapsible Fine-Tuning Pad) */}
-      {showDpad && (
+      {manualMode && showDpad && (
         <div className="absolute bottom-16 right-3 pointer-events-auto z-30 bg-slate-950/95 border border-slate-800 p-3 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs font-bold text-slate-300 pb-1 border-b border-slate-800">
             <span className="flex items-center gap-1">
@@ -1021,7 +1060,8 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
 
       {/* BOTTOM FLOATING CONTROL BAR */}
       <div className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 right-3 pointer-events-auto z-20 bg-slate-950/90 backdrop-blur-md border border-slate-800/80 p-2 sm:p-2.5 rounded-2xl shadow-2xl flex items-center justify-between gap-2">
-        {/* Left Side: Point Selector Tabs & Fine-Tune D-Pad Toggle */}
+        {/* Left Side: Point Selector Tabs & Fine-Tune D-Pad Toggle (bara i handläget) */}
+        {manualMode ? (
         <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto py-0.5">
           {labels.map((lbl, idx) => (
             <button
@@ -1051,6 +1091,11 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
             <span className="hidden sm:inline">Pilknappar</span>
           </button>
         </div>
+        ) : (
+          <span className="text-[11px] text-slate-400 leading-snug px-1">
+            Kontrollera att de streckade linjerna ligger på trådarna.
+          </span>
+        )}
 
         {/* Right Side: Primary Save Button */}
         <button

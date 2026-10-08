@@ -15,7 +15,7 @@ const SECTIONS: Section[] = [
     icon: Crosshair,
     title: 'Kalibrering',
     body:
-      'Sikta stativet så hårkorset ligger på bullseye och tryck "Zooma till tavlan" – appen hittar tavlan och zoomar in lagom. Tryck sedan "Auto": appen hittar ringarna, vrider sektorhjulet rätt ur ringarnas färger och finjusterar mot ringkanterna. Kontrollera att de streckade sektorlinjerna ligger på tavlans riktiga trådar, och tryck "Spara kalibrering" - det sparar allt, även zoomen. Kan appen inte läsa färgerna ber den dig trycka där 20:an sitter. Övriga verktyg (rikta in sektorer, finjustera, återställ, sikte) finns under "Mer" men behövs sällan. En sparad kalibrering kontrolleras mot tavlan automatiskt när appen startar.',
+      'Sikta stativet så hårkorset ligger på bullseye och tryck "Zooma till tavlan" – appen hittar tavlan och zoomar in lagom. Tryck sedan "Auto": appen hittar ringarna, vrider sektorhjulet rätt ur ringarnas färger och finjusterar mot ringkanterna. Kontrollera att de streckade sektorlinjerna ligger på tavlans riktiga trådar, och tryck "Spara kalibrering" - det sparar allt, även zoomen. Kan appen inte läsa färgerna ber den dig trycka där 20:an sitter. Övriga verktyg (justera punkterna för hand, rikta in sektorer, finjustera, återställ, sikte) finns under "Mer" men behövs sällan. Hittar Auto inte tavlan öppnas handjusteringen av sig själv. En sparad kalibrering kontrolleras mot tavlan automatiskt när appen startar.',
   },
   {
     icon: Ear,
