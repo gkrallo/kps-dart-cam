@@ -1,5 +1,7 @@
 # Testplan vid tavlan
 
+> **2026-10-09** (`GRANSKNING.md` avsnitt 13): Netlify, nya pilset. **Nästa pass:** kör alltid Auto när stativet ställts upp. Prova röda pilar utanför tavlan/mot svarta ytor (färgkontrollen), och grab direkt när en svart pil avvisas som skugga. Rör helst inte telefonen under spel - den gungar.
+
 > **Farfar 2026-10-08** (`GRANSKNING.md` avsnitt 12): flaggan och "Kasta
 > vidare" verifierade i spel. Fem av felen är två pilar som blir en form i
 > bild - det byggs offline mot kvällens bildpar. **Nästa pass:** samma sak

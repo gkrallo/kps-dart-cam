@@ -766,3 +766,41 @@ pilens skaft sett från kameran. Ingen åtgärd.
 som "dold". Materialminskningen kan inte skilja den från en helt dold pil
 som blottas när den framför dras ut, och bildparet är för rörigt för att
 avgöra vad som hände.
+
+## 13. Testpass 2026-10-09: Netlify och nya pilar
+
+Första passet på Netlify (`kps-dart-cam.netlify.app`). Repot är privat. Två
+nya pilset: svart vinge med silverspets (Spelare 1) och röd vinge med svart
+pipa (Spelare 2), i 501.
+
+**Flytten.** Kalibreringen och de 26 rättningarna flyttades från den gamla
+adressen (localStorage är per adress; nåddes via GitHubs sida på samma
+domän). Kalibreringen var fel att flytta: stativet hade ställts upp på nytt
+sedan dagen innan, tavlan satt lägre och större i bild, och tre kast lästes
+helt fel (S14 → T14, S2 → S15, S14 → S19). Auto mot dagens uppställning:
+rotation 0,25°, konfidens 0,98. **Lärdom: kör alltid Auto när stativet
+ställts upp på nytt; flytta aldrig en kalibrering mellan dagar.**
+
+**Kalibreringskontrollen vid start** körde nu hela vägen (`[kal]`-loggen:
+återställd → video klar → kontroll klar efter 2,5 s).
+
+**Fel, med bildpar:**
+
+| Fall | Vad som hände | Åtgärd |
+|---|---|---|
+| Röd pil strax utanför D18 | Avvisad som skugga: pipan syntes knappt mot sifferringen, den tunna röda vingen släppte igenom kantens mönster. Offline: mättnad 81 mot 7,6 på tom tavla | Färgkontroll (`6544896`) |
+| Svart pil i 6, först oläst | Formen 19 000 px (tre pilar stor) - pil plus vingens skugga - avvisad som skugga, hittad först vid uttag | Inte åtgärdat; bildparet hann trängas ut. Analysminnet nu 6 i stället för 3 |
+| Pil i 1:an räknades aldrig | Telefonen gungade vid rättning på skärmen (41 % av bilden ändrad), omkalibrering med pilen kvar - den blev en del av "tom tavla" | Detektorn väntar på "Tavlan är tom" (`7f643a6`) |
+
+**Iakttagelse om pilseten** (få kast, ingen statistik än): de svarta vingarna
+är stora och ogenomskinliga och kastar tydliga skuggor från lampan - former
+upp till 26 000 px mot vanliga 7 000. De röda läses bra på tavlan men
+försvinner mot svarta ytor (pipan) och liknar skugga i gråskala (vingen).
+Union Jack-vingarna var mindre och mer genomsläppliga.
+
+**Byggt under passet:** färgkontroll i skuggtestet, spärr mot omkalibrering
+med pilar i tavlan, Autos besked töms inte längre av kalibreringskontrollen,
+plan för fjärrskärmen (`PLAN_FJARRSKARM.md`, väntar på godkännande).
+
+**Kvar:** skuggfelet med svarta vingar (pil + stor skugga i samma form) -
+behöver ett bildpar; fjärrskärmen när planen är godkänd.
