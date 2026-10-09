@@ -1109,10 +1109,10 @@ const STARTUP_GRACE_MS = 2000;
 
     /**
      * ?debug: kopior av analysens indata - rå gråskala nu, toppen av stacken
-     * och tom tavla - för de tre senaste analyserna, så tools/grab.mjs kan
+     * och tom tavla - för de sex senaste analyserna, så tools/grab.mjs kan
      * spara dem och felfallet köras om offline. Bildrutan ensam räcker inte:
      * när kollisionsfallen 2026-10-06 skulle undersökas fanns bara läget
-     * EFTER, inte referensen detektorn jämförde mot. ~6 MB per analys.
+     * EFTER, inte referensen detektorn jämförde mot. ~6 MB per analys. Sex, inte tre: 2026-10-09 hann skuggfelen trängas ut av senare analyser innan de hämtades.
      */
     let pendingFrames: {
       at: string;
@@ -1149,7 +1149,7 @@ const STARTUP_GRACE_MS = 2000;
         const w = window as any;
         const ring: unknown[] = (w.__analysisFrames ??= []);
         ring.push({ ...pendingFrames, line });
-        while (ring.length > 3) ring.shift();
+        while (ring.length > 6) ring.shift();
         pendingFrames = null;
       }
     };

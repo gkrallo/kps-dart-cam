@@ -8,7 +8,7 @@
  *   frame.jpg   videobildrutan som appen just nu ser (samma kamera, samma zoom)
  *   mask.png    tröskelmasken, om fliken kördes med ?debug&mask
  *   state.json  bygge, videoläge, kalibrering, matchläge, detektorns status
- *   analys-N/   (med ?debug) indata till de tre senaste analyserna:
+ *   analys-N/   (med ?debug) indata till de sex senaste analyserna:
  *               cur/top/empty.gray (rå w*h byte, redan blurrad gråskala -
  *               exakt det absdiff fick), samma som PNG, och info.json med
  *               analysraden och de registrerade spetsarna. Gör ett felfall
