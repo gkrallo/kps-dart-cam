@@ -112,6 +112,12 @@ src/
     match.ts                  event-sourcad match: throw/end/undo/remove/replace
     index.ts                  segFromDartScore (bryggan från datorseendet)
 
+  remote/                     Fjärrskärmens synk-lager (ren TS, inget UI ännu) - se PLAN_FJARRSKARM.md
+    protocol.ts               Trådformatet: hello/snapshot/propose/reject/ping/pong/frame, validering
+    transport.ts              Transport-gränssnittet + LoopbackTransport för tester
+    host.ts                   RemoteHost: version + hela matchen till alla, förslag via game/match.ts
+    replica.ts                RemoteReplica: högsta version vinner, förslag som promise, localStorage
+
   utils/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
     homography.ts             DLT + Levenberg-Marquardt-lösare (N punkter, residual)
