@@ -9,8 +9,9 @@ import type { Transport, TransportState } from './transport';
  *
  * - Inga `iceServers`: bara enhetens egna adresser (host-kandidater). På samma
  *   wifi räcker det, och det är det enda som inte kräver en tjänst utanför.
- *   Chrome och Safari döljer adresserna bakom mDNS-namn (*.local); det
- *   fungerar på samma nät och ska inte kringgås.
+ *   Chrome och Safari döljer adresserna bakom mDNS-namn (*.local) för sidor
+ *   utan kamerabehörighet - se unlockHostCandidates för varför fjärrsidan
+ *   ändå ber om kameran.
  * - Ingen trickle: vi väntar tills alla kandidater samlats innan beskrivningen
  *   tas ut, så att allt ryms i EN QR-kod åt vardera hållet.
  * - Kanalen är förhandlad i förväg (`negotiated`, id 0) på båda sidor, så
@@ -35,6 +36,28 @@ function waitForGathering(pc: RTCPeerConnection): Promise<void> {
     // Hellre en kod med de kandidater som hunnit komma än ingen kod alls.
     const timer = setTimeout(done, GATHER_TIMEOUT_MS);
   });
+}
+
+/**
+ * Ber om kameran ett ögonblick innan svaret skapas, och släpper den direkt.
+ *
+ * Uppmätt 2026-10-09 (Galaxy S25 + Samsung-surfplatta, samma wifi):
+ * parkopplingen gick igenom åt båda hållen men kanalen kom aldrig upp. En
+ * sida UTAN kamerabehörighet döljer sina adresser bakom slumpade *.local-
+ * namn, och de måste slås upp med multicast-DNS - som många hemrouter och
+ * Android-enheter inte släpper fram. Kameraenheten har behörighet och visar
+ * sin riktiga adress; fjärrsidan hade det inte. Med beviljad behörighet
+ * lägger Chrome riktiga adresser i kandidaterna. Nekas frågan fortsätter vi
+ * ändå - på vissa nät räcker mDNS.
+ */
+async function unlockHostCandidates(): Promise<void> {
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch {
+    /* nekad eller ingen kamera - försök med mDNS-namnen */
+  }
 }
 
 export class WebRtcTransport implements Transport {
@@ -85,6 +108,7 @@ export class WebRtcTransport implements Transport {
   /** Fjärrskärmens sida: tar emot erbjudandet och skapar svaret (QR-kod B). */
   static async acceptOffer(offerCode: string): Promise<{ transport: WebRtcTransport; code: string }> {
     const offer = await decodeSignal(offerCode, 'offer');
+    await unlockHostCandidates();
     const pc = new RTCPeerConnection(RTC_CONFIG);
     const t = new WebRtcTransport(pc);
     try {
