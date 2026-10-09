@@ -834,6 +834,7 @@ const STARTUP_GRACE_MS = 2000;
      * pils remsa ligger däremot helt i det gamla materialet och försvinner,
      * så försöket kan inte hitta på en pil ur en sådan.
      */
+    const SECOND_ATTEMPT_MIN_CONFIDENCE = 0.6;
     const findNewDartExcludingPrior = (frameArea: number): TipFind | null => {
       if (snapshots.length < 2) return null;
       const top = snapshots[snapshots.length - 1];
@@ -849,7 +850,18 @@ const STARTUP_GRACE_MS = 2000;
       cv.threshold(rawDiff, rawThresh, RAW_DIFF_THRESHOLD, 255, cv.THRESH_BINARY);
       cv.bitwise_and(rawThresh, priorThresh, newOnly);
       const found = findDartTip(newOnly, top, frameArea);
-      if (found) found.how = `${found.how}, utan gammalt material`;
+      if (!found) return null;
+      // Bara en tydlig pilaxel räknas här. Uppmätt 2026-10-09: en ny pil i
+      // grön bull landade ovanpå en gammal i bullen; utan det gamla
+      // materialet återstod bara den nya pilens bakre del, axeln fick
+      // konfidens 0,33 och "spetsen" hamnade i fel ände - S13 på 72 mm.
+      // Riktiga kast ligger på 0,55-0,80 (valideringsfallet: 0,74). En
+      // missad pil hörs och läggs till; en tyst felavläsning gör det inte.
+      if (!found.how.startsWith('axel') || found.confidence < SECOND_ATTEMPT_MIN_CONFIDENCE) {
+        lastAnalysis = `andra försöket (utan gammalt material) gav bara ${found.how} - avstår`;
+        return null;
+      }
+      found.how = `${found.how}, utan gammalt material`;
       return found;
     };
 
@@ -1616,9 +1628,10 @@ const STARTUP_GRACE_MS = 2000;
         const firstWhy = lastAnalysis;
         found = findNewDartExcludingPrior(frameArea);
         if (!found) {
-          // Absorbera det första försökets blobb, och behåll dess förklaring.
+          // Absorbera det första försökets blobb; förklaringen får båda försöken.
+          const secondWhy = lastAnalysis;
           lastBlobRect = firstRect;
-          lastAnalysis = firstWhy;
+          lastAnalysis = `${firstWhy} | 2:a försöket: ${secondWhy}`;
         }
       }
       if (found) registerNewThrow(found);
