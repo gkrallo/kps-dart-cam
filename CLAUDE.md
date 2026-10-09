@@ -73,7 +73,10 @@ principen; moln-ML är det inte.
 | Node | CI kör Node 20. Utvecklat mot Node 22. |
 | Publicering | Netlify (`netlify.toml`), https://kps-dart-cam.netlify.app. Repot är privat sedan 2026-10; GitHub Actions kör bara tester |
 
-Inga produktionsberoenden utöver React och lucide-react. OpenCV är en
+Produktionsberoenden: React, lucide-react, samt för fjärrskärmens QR-koder
+`qrcode-generator` (MIT, ritar koden - det finns inget webbläsar-API för det)
+och `jsqr` (Apache 2.0, läser koden där `BarcodeDetector` saknas, t.ex. iPhone;
+laddas lat och bara då). Båda godkända av Kristian 2026-10-09. OpenCV är en
 devDependency vars `opencv.js` kopieras till `public/` vid bygge.
 
 ---
@@ -83,7 +86,8 @@ devDependency vars `opencv.js` kopieras till `public/` vid bygge.
 ```
 src/
   App.tsx                     Huvudkomponent. Kalibreringsflödet bor här.
-  main.tsx                    Entry point
+  RemoteApp.tsx               Fjärrskärmen (?remote). Importerar aldrig kamera/OpenCV/detektor
+  main.tsx                    Entry point: väljer App eller RemoteApp (React.lazy, egna chunkar)
   types.ts                    Point, DartScore, TurnRecord
   buildInfo.ts                BUILD_VERSION (git-hash + byggtid, satt av vite.config.ts)
   index.css                   Tailwind-import + animationer
@@ -99,11 +103,19 @@ src/
     HelpPanel.tsx             Hjälptexter (kalibrering, uttagning, rättning)
     RetrievalTip.tsx          Engångstips: ta ut de pilar som räknats först
     UpdateBanner.tsx          Registrerar service workern, "Ny version finns – ladda om?"
+    remote/                   Fjärrskärmens vyer
+      HostPairing.tsx         Kamerans parkoppling: QR-kod A, läser QR-kod B ur kameraströmmen
+      RemotePairing.tsx       Fjärrskärmens parkoppling: skanna/klistra in A, visa B
+      QrCode.tsx              QR-kod som SVG (qrcode-generator, felkorrigering L)
+      QrCameraScanner.tsx     Egen kamera för QR-läsning (bara på fjärrskärmen)
+      CodeTools.tsx           Kopiera/dela/klistra in koden - reservvägen utan kamera
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
     useDartDetector.ts        rAF-loop: warp, bildsubtraktion, konturanalys, tavla-tömd
     useMatch.ts               React-omslag för spelmotorn (localStorage-persistens)
+    useRemoteHost.ts          Kamerans RemoteHost, bunden till samma Match som useMatch; parkoppling
+    useRemoteReplica.ts       Fjärrskärmens RemoteReplica som React-tillstånd
 
   game/                       Regelmotor, portad från kps-dart-scorecard
     types.ts                  Seg, MatchState, Match, MatchAction, Engine
@@ -112,11 +124,14 @@ src/
     match.ts                  event-sourcad match: throw/end/undo/remove/replace
     index.ts                  segFromDartScore (bryggan från datorseendet)
 
-  remote/                     Fjärrskärmens synk-lager (ren TS, inget UI ännu) - se PLAN_FJARRSKARM.md
+  remote/                     Fjärrskärmens synk-lager (ren TS, ingen React) - se PLAN_FJARRSKARM.md
     protocol.ts               Trådformatet: hello/snapshot/propose/reject/ping/pong/frame, validering
     transport.ts              Transport-gränssnittet + LoopbackTransport för tester
     host.ts                   RemoteHost: version + hela matchen till alla, förslag via game/match.ts
     replica.ts                RemoteReplica: högsta version vinner, förslag som promise, localStorage
+    webRtcTransport.ts        Transport över RTCDataChannel: inga iceServers, ingen trickle
+    sdp.ts                    Parkopplingskoden: minifierad SDP, deflate-raw, base64url
+    qrScan.ts                 QR-läsning: BarcodeDetector, annars jsQR (lat)
 
   utils/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
@@ -608,7 +623,51 @@ ur cachen (`navigateFallback`). Scope och URL:er följer Vites `base`.
   ner i hjälpen. Kolla den först när något beter sig konstigt: med service
   workern är det inte självklart att telefonen kör senaste bygget.
 - `workbox-window` (ca 6 kB) kommer med i klientbundlen via
-  `virtual:pwa-register/react` - det enda som tillkommit i produktion.
+  `virtual:pwa-register/react`.
+
+**Fjärrskärmen: hela matchen med versionsnummer, inte event.** Se
+`PLAN_FJARRSKARM.md`. `match.actions` ändras på plats vid rättningar, så
+sekvensnummer per post skulle förskjutas; i stället skickar `RemoteHost` hela
+den serialiserade matchen (några kB) med en version efter varje ändring.
+Förslag från fjärrskärmen körs genom samma funktioner i `game/match.ts` som
+telefonens knappar. Index-förslag (rätta/sätt in/ta bort) och ångra på en
+gammal version avvisas med "Matchen ändrades - försök igen" - en pil kan ha
+landat medan någon rättade.
+
+**Parkopplingen är förbindelsen.** Ingen server: kamerans erbjudande (kod A)
+och fjärrskärmens svar (kod B) byts via QR-koder. WebRTC utan `iceServers`
+och utan trickle (`webRtcTransport.ts`). Kod A är en länk
+(`<origin>/?remote#<kod>`) så att surfplattans vanliga kamera-app öppnar
+fjärrskärmen direkt. Kod B läses med kamerans egen ström (`BarcodeDetector`
+på videoelementet) medan fjärrskärmen hålls upp framför tavlan. Uppmätta
+längder 2026-10-09 (headless Chrome, `sdp.test.ts` och ett genomkört par i
+byggd app):
+
+| | tecken | QR (fel­korr. L) |
+|---|---|---|
+| en mDNS-kandidat | 477 | 77×77 (v15) |
+| två mDNS-kandidater (+ TCP som stryks) | 538 | 81×81 (v16) |
+| kod A som länk, två kandidater | 579 | 81×81 (v16) |
+| PC med 6 gränssnitt, riktiga IP (kamerabehörighet ger dem) | A 656 / B 633 | 89×89 / 85×85 |
+
+Minifieringen tar SDP:n från ca 1 040 till 570 tecken; deflate vinner lite
+till, för fingeravtryck, lösenord och mDNS-namn är slump. Chrome visar
+riktiga IP-adresser i stället för mDNS-namn när sidan har kamerabehörighet -
+kameran har alltid det, så räkna med en kandidat per nätgränssnitt där.
+Mät på telefonen och surfplattan; blir koden svårläst (> v18) är nästa steg
+en egen binär packning av fingeravtryck och kandidater.
+
+- **Avläsningen pausas under parkopplingen** och fem sekunder efter
+  (`PAIRING_RESUME_MS` i `App.tsx`): en surfplatta framför tavlan är annars
+  ett "främmande föremål" som efter 8 s tas upp i referensbilden. Pausen
+  nollställer detektorn (den tar tavlan som "tom" vid omstarten), så mitt i
+  en tur med pilar i tavlan kommer samma "Dra ut alla pilar"-fråga som efter
+  en omkalibrering. Parkoppla därför helst FÖRE kalibreringen.
+- **En fjärrskärm som försvinner påverkar ingenting** på kameran: den glöms
+  bara. Laddas kameran om dör alla kanaler; fjärrskärmen visar senast kända
+  läge och måste parkopplas om (utan server går ICE inte att förhandla om).
+- Rättningar från fjärrskärmen loggas i rättningsloggen med `by` =
+  fjärrskärmens clientId, och läses upp på kameran ("Rättat: 6 blir 10").
 
 ---
 

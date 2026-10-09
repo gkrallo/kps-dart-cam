@@ -80,6 +80,8 @@ grindar; del E–G går att ta en annan kväll.
 | **R3** Tjock sägs direkt; avvisade pilar säger "Räknas inte" | `App` | 09-18 |
 | **R5** Ljud/tal låses upp vid första pekning även efter tyst återupptagning | `App`, `audioEngine` | 09-18 |
 | **R13** Spelarbytet läser upp ställning / mål och pilar | `App` | 09-18 |
+| Service worker: offline-start, "Ny version finns", `reload.mjs` förbi den | `vite.config.ts`, `UpdateBanner`, `tools/` | 10-09 |
+| Fjärrskärm: parkoppling via QR, rättning från surfplattan (Del H) | `src/remote/`, `RemoteApp` | 10-09 |
 
 ---
 
@@ -297,6 +299,40 @@ Oberoende observationer; kör och samla.
    direkt). Registrerades ett kast? Försvann det?
 9. **Hel Farfar-runda, tre spelare**, utan att röra telefonen, med en
    utslagning. Hörs allt som behövs från linjen?
+
+---
+
+## Del H: fjärrskärm (20 min, kameran S25 + surfplattan, samma wifi)
+
+Genomkört en gång i headless Chrome på datorn (två flikar, byggd app): parkoppling
+med inklistrad kod, `hello`/`snapshot` över riktig WebRTC, fjärrskärmen hämtade
+inte `opencv.js`. Det som återstår är riktiga enheter, riktiga QR-koder och
+riktigt wifi.
+
+Före: `node tools/reload.mjs "?debug"` på telefonen; öppna appen på surfplattan
+en gång med nät (så att service workern cachar den).
+
+1. **SDP godtas (minifierad).** Parkoppla enligt punkt 2. Kommer kanalen upp är
+   den minifierade beskrivningen godtagen av `setRemoteDescription` på båda
+   sidor. Kommer den inte upp inom 15 s säger telefonen "Ingen kontakt med
+   fjärrskärmen" - notera det, och läs konsolen (`node tools/history.mjs`).
+2. **Parkoppling före kalibrering.** Starta appen på telefonen, tryck
+   **Fjärrskärm** (nere till vänster i siktet). QR-kod A visas. Skanna den med
+   surfplattans vanliga kamera-app - fjärrskärmen ska öppnas och efter någon
+   sekund visa QR-kod B. Tryck **Nästa** på telefonen och håll surfplattan
+   framför telefonens kamera. Telefonen ska säga "Fjärrskärm ansluten",
+   surfplattan visa "Ansluten". Notera: hur lätt lästes A och B (avstånd,
+   antal sekunder)? QR-storleken står i CLAUDE.md.
+3. **Reservvägen.** Gör om med **Klistra in kod** på båda sidor (kopiera via
+   Dela/Kopiera, skicka med t.ex. en anteckning). Ska fungera lika.
+4. **Fel kod.** Klistra in telefonens egen kod A som svar på telefonen: begripligt
+   felmeddelande, ingen krasch.
+5. **Indikatorn.** Efter kalibrering och spelstart: "fjärr ansluten" i headern,
+   siffra på **Fjärr**-knappen.
+6. **Parkoppling mitt i match**, från **Fjärr**-knappen, med en pil i tavlan.
+   Varningen om pausad avläsning ska synas; efter anslutningen säger telefonen
+   "Ta bort den ur bild, avläsningen startar om fem sekunder" och frågar "Dra
+   ut alla pilar". Ingen pil får registreras medan surfplattan är i bild.
 
 ---
 

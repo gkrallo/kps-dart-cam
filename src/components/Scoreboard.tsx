@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RotateCcw, RefreshCw, Trophy, AlertTriangle, Settings, SkipForward, Pencil, HelpCircle, History, X } from 'lucide-react';
+import { RotateCcw, RefreshCw, Trophy, AlertTriangle, Settings, SkipForward, Pencil, HelpCircle, History, X, MonitorSmartphone } from 'lucide-react';
 import type { MatchState, Seg } from '../game/types';
 import { label as segLabel, score as segScore } from '../game/segments';
 import { ThrowEditor } from './ThrowEditor';
@@ -32,6 +32,10 @@ interface ScoreboardProps {
   onToggleViewMode?: () => void;
   onHelpClick?: () => void;
   onHistoryClick?: () => void;
+  /** Öppna parkopplingen av en fjärrskärm. */
+  onRemoteClick?: () => void;
+  /** Antal anslutna fjärrskärmar. */
+  remoteCount?: number;
   /** Turen avslutades med färre avlästa pilar än spelaren hade kvar att kasta. */
   missedDarts?: { playerName: string; read: number; expected: number } | null;
   onDismissMissedDarts?: () => void;
@@ -58,6 +62,8 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
   onToggleViewMode,
   onHelpClick,
   onHistoryClick,
+  onRemoteClick,
+  remoteCount = 0,
   missedDarts,
   onDismissMissedDarts,
 }) => {
@@ -284,6 +290,19 @@ export const Scoreboard: React.FC<ScoreboardProps> = ({
             >
               <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
               <span>Hjälp</span>
+            </button>
+          )}
+          {onRemoteClick && (
+            <button
+              onClick={onRemoteClick}
+              title="Anslut en fjärrskärm (surfplatta, telefon, dator) som visar och rättar matchen"
+              className={`flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 border px-2.5 py-1.5 rounded-xl font-medium text-xs shrink-0 ${
+                remoteCount > 0 ? 'text-emerald-300 border-emerald-700/60' : 'text-slate-300 border-slate-700'
+              }`}
+            >
+              <MonitorSmartphone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Fjärr</span>
+              {remoteCount > 0 && <span className="tabular-nums">{remoteCount}</span>}
             </button>
           )}
         </div>

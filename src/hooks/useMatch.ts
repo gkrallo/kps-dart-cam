@@ -12,7 +12,8 @@ import {
   restoreMatch,
   type CreateMatchOptions,
 } from '../game/match';
-import type { DetectionMeta, Match, MatchState, Seg } from '../game/types';
+import type { DetectionMeta, Match, MatchAction, MatchState, Seg } from '../game/types';
+import type { AppliedOp } from '../remote/host';
 import { appendCorrection } from '../utils/correctionLog';
 
 const KEY = 'kps-dart-cam:match:v1';
@@ -63,6 +64,52 @@ function save(match: Match | null): void {
   } catch {
     /* privat surfning m.m. */
   }
+}
+
+/**
+ * Loggar en rättning. `old` är kastet FÖRE ändringen - efteråt finns inte det
+ * gamla värdet eller detektionsdatan kvar. Se utils/correctionLog.ts.
+ * `by` är fjärrskärmens clientId när rättningen kom därifrån.
+ */
+function logCorrection(
+  m: Match,
+  old: MatchAction | undefined,
+  kind: 'edit' | 'delete',
+  to: Seg | null,
+  source: 'manual' | 'auto',
+  by?: string,
+) {
+  if (!old || old.t !== 'T') return;
+  const same = !!to && old.v === to.v && old.m === to.m;
+  // Samma värde är ingen rättning - utom på ett flaggat kast, där det är en
+  // bekräftelse av att avläsningen var rätt (se CorrectionKind 'confirm').
+  if (same && !old.d?.alt?.length) return;
+  appendCorrection({
+    at: Date.now(),
+    kind: same ? 'confirm' : kind,
+    source,
+    matchId: m.id,
+    mode: m.config.mode,
+    detected: old.d ?? null,
+    from: { v: old.v, m: old.m },
+    to,
+    ...(by ? { by } : {}),
+  });
+}
+
+/** En pil som matades in för hand - alltså en som avläsningen missade. */
+function logMissed(m: Match, seg: Seg, by?: string) {
+  appendCorrection({
+    at: Date.now(),
+    kind: 'missed',
+    source: 'manual',
+    matchId: m.id,
+    mode: m.config.mode,
+    detected: null,
+    from: null,
+    to: seg,
+    ...(by ? { by } : {}),
+  });
 }
 
 /**
@@ -128,39 +175,10 @@ export function useMatch() {
     bump();
   }, [bump]);
 
-  /**
-   * Loggar en rättning innan kastlistan ändras - efteråt finns inte det gamla
-   * värdet eller detektionsdatan kvar. Se utils/correctionLog.ts.
-   */
-  const logCorrection = (
-    m: Match,
-    actionIndex: number,
-    kind: 'edit' | 'delete',
-    to: Seg | null,
-    source: 'manual' | 'auto',
-  ) => {
-    const old = m.actions[actionIndex];
-    if (!old || old.t !== 'T') return;
-    const same = !!to && old.v === to.v && old.m === to.m;
-    // Samma värde är ingen rättning - utom på ett flaggat kast, där det är en
-    // bekräftelse av att avläsningen var rätt (se CorrectionKind 'confirm').
-    if (same && !old.d?.alt?.length) return;
-    appendCorrection({
-      at: Date.now(),
-      kind: same ? 'confirm' : kind,
-      source,
-      matchId: m.id,
-      mode: m.config.mode,
-      detected: old.d ?? null,
-      from: { v: old.v, m: old.m },
-      to,
-    });
-  };
-
   const editThrow = useCallback(
     (actionIndex: number, seg: Seg, source: 'manual' | 'auto' = 'manual') => {
       if (!ref.current) return;
-      logCorrection(ref.current, actionIndex, 'edit', seg, source);
+      logCorrection(ref.current, ref.current.actions[actionIndex], 'edit', seg, source);
       replaceThrow(ref.current, actionIndex, seg);
       bump();
     },
@@ -170,7 +188,7 @@ export function useMatch() {
   const deleteThrow = useCallback(
     (actionIndex: number) => {
       if (!ref.current) return;
-      logCorrection(ref.current, actionIndex, 'delete', null, 'manual');
+      logCorrection(ref.current, ref.current.actions[actionIndex], 'delete', null, 'manual');
       removeThrow(ref.current, actionIndex);
       bump();
     },
@@ -189,20 +207,33 @@ export function useMatch() {
       const before = ref.current.actions.length;
       insertThrow(ref.current, actionIndex, seg, meta);
       const accepted = ref.current.actions.length > before;
-      if (accepted && !meta) {
-        appendCorrection({
-          at: Date.now(),
-          kind: 'missed',
-          source: 'manual',
-          matchId: ref.current.id,
-          mode: ref.current.config.mode,
-          detected: null,
-          from: null,
-          to: seg,
-        });
-      }
+      if (accepted && !meta) logMissed(ref.current, seg);
       bump();
       return accepted;
+    },
+    [bump],
+  );
+
+  /**
+   * En fjärrskärm har redan ändrat matchen: RemoteHost tillämpar förslaget på
+   * samma Match-objekt, genom samma funktioner i game/match.ts. Här görs resten
+   * av det en lokal ändring gör - rättningsloggen, sparning, omritning. Loggen
+   * behöver kastlistan FÖRE ändringen, som RemoteHost skickar med.
+   */
+  const commitRemoteChange = useCallback(
+    (a: AppliedOp) => {
+      const m = ref.current;
+      if (!m) return;
+      const op = a.op;
+      if (op.kind === 'replace') {
+        logCorrection(m, a.before[op.actionIndex], 'edit', op.seg, 'manual', a.clientId);
+      } else if (op.kind === 'remove') {
+        logCorrection(m, a.before[op.actionIndex], 'delete', null, 'manual', a.clientId);
+      } else if (op.kind === 'throw' || op.kind === 'insert') {
+        // En pil som matas in på fjärrskärmen är alltid en som avläsningen missade.
+        logMissed(m, op.seg, a.clientId);
+      }
+      bump();
     },
     [bump],
   );
@@ -222,5 +253,6 @@ export function useMatch() {
     editThrow,
     deleteThrow,
     insertMissingThrow,
+    commitRemoteChange,
   };
 }

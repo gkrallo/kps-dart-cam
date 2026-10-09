@@ -34,7 +34,8 @@ await main(async () => {
   for (const e of entries.slice(-20)) {
     const t = new Date(e.at).toLocaleString('sv-SE');
     const d = e.detected ? `${e.detected.label} @ ${e.detected.rMM} mm / ${e.detected.deg}°` : 'ej avläst';
-    console.log(`${t}  ${e.kind.padEnd(6)} ${e.source.padEnd(6)} såg ${d.padEnd(28)} ${segLabel(e.from)} -> ${segLabel(e.to)}`);
+    const by = e.by ? `  (fjärr ${e.by.slice(0, 6)})` : '';
+    console.log(`${t}  ${e.kind.padEnd(6)} ${e.source.padEnd(6)} såg ${d.padEnd(28)} ${segLabel(e.from)} -> ${segLabel(e.to)}${by}`);
   }
 
   if (clear) {

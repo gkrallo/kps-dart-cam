@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Loader2, Camera, Eye, HelpCircle } from 'lucide-react';
+import { Loader2, Camera, Eye, HelpCircle, MonitorSmartphone } from 'lucide-react';
 import { CameraFeed } from './components/CameraFeed';
 import { useOpenCV } from './hooks/useOpenCV';
 import { CalibrationOverlay } from './components/CalibrationOverlay';
@@ -12,13 +12,37 @@ import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
 import { segFromDartScore, segFromLabel } from './game';
-import { engineFor, matchState, insertIndexForRevealedThrow } from './game/match';
+import {
+  engineFor,
+  matchState,
+  insertIndexForRevealedThrow,
+  restoreMatch,
+  serializeMatch,
+} from './game/match';
 import type { ZoomCapability } from './components/CameraFeed';
 import { Scoreboard } from './components/Scoreboard';
 import { HelpPanel } from './components/HelpPanel';
 import { RetrievalTip } from './components/RetrievalTip';
 import { TurnHistory } from './components/TurnHistory';
 import { BUILD_VERSION } from './buildInfo';
+import { useRemoteHost } from './hooks/useRemoteHost';
+import { HostPairing } from './components/remote/HostPairing';
+import type { AppliedOp } from './remote/host';
+
+/**
+ * Hur länge avläsningen står kvar i paus efter en parkoppling. Fjärrskärmen
+ * hölls nyss upp framför kameran, och startar detektorn medan den är kvar i
+ * bild tas den som "tom tavla". Tiden räcker för att sänka den.
+ */
+const PAIRING_RESUME_MS = 5000;
+
+/** dartMath-etiketten för ett fält - det audioEngine.scoreText förstår. */
+function dartLabel(s: Seg): string {
+  if (s.v === 0) return 'MISS';
+  if (s.v === 25) return s.m === 2 ? 'DB' : '25';
+  return `${s.m === 3 ? 'T' : s.m === 2 ? 'D' : 'S'}${s.v}`;
+}
+const spoken = (s: Seg) => audioEngine.scoreText(dartLabel(s), s.v * s.m);
 
 const RETRIEVAL_TIP_SEEN_KEY = 'kps-dart-cam:retrieval-tip-seen';
 
@@ -106,6 +130,7 @@ export default function App() {
 
   const {
     match, state, lastPlayedAt, start, throwSeg, finishTurn, undoLast, editThrow, deleteThrow, insertMissingThrow,
+    commitRemoteChange,
   } = useMatch();
   const [showResume, setShowResume] = useState(false);
   const startupDecided = useRef(false);
@@ -502,6 +527,114 @@ export default function App() {
     setDebugInfo(info);
   }, []);
 
+  /**
+   * En fjärrskärm har ändrat matchen. RemoteHost har redan kört ändringen
+   * genom game/match.ts; här görs det som hosts egna knappar gör runt
+   * omkring - rättningsloggen och sparningen (commitRemoteChange), den
+   * bokföring App håller för detektorns skull, och uppläsningen. Den sista är
+   * viktigare här än för en rättning på telefonen: den som rättar står vid
+   * surfplattan, de andra hör bara telefonen.
+   */
+  const handleRemoteApplied = useCallback(
+    (a: AppliedOp) => {
+      if (!match) return;
+      commitRemoteChange(a);
+      const op = a.op;
+      const visits = visitActionsRef.current;
+
+      // Detektorns löpnummer -> kastindex måste följa med när index flyttas,
+      // annars rättar en omläsning vid uttagningen fel kast.
+      if (op.kind === 'insert') {
+        for (const [s, ai] of visits) if (ai >= op.actionIndex) visits.set(s, ai + 1);
+      } else if (op.kind === 'remove') {
+        for (const [s, ai] of visits) {
+          if (ai === op.actionIndex) visits.delete(s);
+          else if (ai > op.actionIndex) visits.set(s, ai - 1);
+        }
+      } else if (op.kind === 'undo') {
+        for (const [s, ai] of visits) if (ai >= match.actions.length) visits.delete(s);
+      }
+
+      // Samma regel som handleManualInsert: en handinlagd pil i den pågående
+      // turen ska inte läggas in en gång till om detektorn hittar den vid
+      // uttagningen.
+      if (op.kind === 'throw' || op.kind === 'insert') {
+        const before = restoreMatch({ ...serializeMatch(match), actions: a.before.slice() });
+        if (before) {
+          const st = matchState(before);
+          const turnStart =
+            st.currentDarts.length > 0 ? st.log[st.log.length - st.currentDarts.length].ai : a.before.length;
+          const at = op.kind === 'throw' ? a.before.length : op.actionIndex;
+          if (at >= turnStart) manualAddsRef.current += 1;
+        }
+        setMissedDarts(null);
+      }
+
+      let say = '';
+      let toast = '';
+      if (op.kind === 'replace') {
+        const old = a.before[op.actionIndex];
+        const from = old && old.t === 'T' ? { v: old.v, m: old.m } : null;
+        say = from ? `Rättat: ${spoken(from)} blir ${spoken(op.seg)}.` : `Rättat till ${spoken(op.seg)}.`;
+        toast = `Rättad: ${dartLabel(op.seg)}`;
+      } else if (op.kind === 'remove') {
+        const old = a.before[op.actionIndex];
+        say = old && old.t === 'T' ? `Borttagen: ${spoken({ v: old.v, m: old.m })}.` : 'Pil borttagen.';
+        toast = 'Pil borttagen';
+      } else if (op.kind === 'throw' || op.kind === 'insert') {
+        say = `Tillagd: ${spoken(op.seg)}.`;
+        toast = `Tillagd: ${dartLabel(op.seg)}`;
+      } else if (op.kind === 'undo') {
+        say = 'Ångrat.';
+        toast = 'Ångrat';
+      } else if (op.kind === 'endTurn') {
+        // Som "Avsluta tur" på telefonen: tömningen av tavlan efteråt hör
+        // till den här turen och får inte avsluta nästa spelares.
+        manualEndRef.current = true;
+        const next = a.after.active;
+        if (!a.after.finished && next) {
+          audioEngine.playSwitchSound();
+          say = a.after.mode === 'FARFAR' ? `${next.name} kastar.` : `${next.name} kastar. ${next.score} kvar.`;
+        }
+        toast = 'Tur avslutad';
+      }
+      if (say) audioEngine.speak(say);
+      if (toast) {
+        setLastScoredDartLabel(`Fjärr: ${toast}`);
+        window.setTimeout(() => setLastScoredDartLabel(null), 2500);
+      }
+    },
+    [match, commitRemoteChange],
+  );
+
+  const { clients: remoteClients, startPairing } = useRemoteHost(match, state, handleRemoteApplied);
+  const [showPairing, setShowPairing] = useState(false);
+  /** Paus efter parkopplingen, se PAIRING_RESUME_MS. */
+  const [pairingHold, setPairingHold] = useState(false);
+
+  const closePairing = useCallback(
+    (connected: boolean) => {
+      setShowPairing(false);
+      if (connected) {
+        audioEngine.speak(
+          isCalibrated
+            ? 'Fjärrskärm ansluten. Ta bort den ur bild, avläsningen startar om fem sekunder.'
+            : 'Fjärrskärm ansluten.',
+        );
+      }
+      if (!isCalibrated) return;
+      setPairingHold(true);
+      window.setTimeout(() => setPairingHold(false), PAIRING_RESUME_MS);
+      // Detektorn tappar allt den visste när den pausas och tar tavlan som
+      // den ser ut vid omstarten som "tom". Kan pilar sitta kvar: samma fråga
+      // som efter en omkalibrering mitt i en tur.
+      if (state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval)) {
+        setConfirmEmpty(true);
+      }
+    },
+    [isCalibrated, state, awaitingRetrieval],
+  );
+
   useDartDetector(
     cv,
     videoElement,
@@ -509,7 +642,9 @@ export default function App() {
     // Detektorn får inte gå medan uppstartskortet eller spelinställningarna
     // ligger över: pilar som registreras då hamnar i fel match, eller i en
     // match användaren just höll på att byta ut.
-    isCalibrated && !showSetup && !showResume && !confirmEmpty,
+    // Inte heller under parkopplingen av en fjärrskärm (den hålls upp framför
+    // kameran) eller strax efter, se PAIRING_RESUME_MS.
+    isCalibrated && !showSetup && !showResume && !confirmEmpty && !showPairing && !pairingHold,
     motionThreshold,
     debugCanvasRef,
     handleDartDetected,
@@ -676,6 +811,15 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {remoteClients.length > 0 && (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950/90 border border-emerald-700/60 text-emerald-300 text-[10px] font-bold"
+              title="Fjärrskärmar anslutna"
+            >
+              <MonitorSmartphone className="w-3 h-3" />
+              fjärr ansluten{remoteClients.length > 1 ? ` (${remoteClients.length})` : ''}
+            </span>
+          )}
           {/* Bara efter kalibrering: CalibrationOverlays egen knapprad ligger i
               samma z-lager (z-20) men senare i DOM, så den ritas ÖVER headern
               och gömde knappen här under kalibreringen. Under kalibreringen
@@ -738,6 +882,28 @@ export default function App() {
             )}
           </CameraFeed>
         </div>
+
+        {/* Fjärrskärmen parkopplas helst FÖRE kalibreringen: den hålls upp
+            framför kameran, och då hinner stativet inte knuffas efteråt. */}
+        {!isCalibrated && !showPairing && (
+          <button
+            onClick={() => setShowPairing(true)}
+            className="absolute bottom-24 left-3 z-30 flex items-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700/80 px-3 py-2 rounded-2xl text-xs font-bold shadow-lg backdrop-blur-md active:scale-95"
+          >
+            <MonitorSmartphone className="w-4 h-4 text-blue-400" />
+            Fjärrskärm
+          </button>
+        )}
+
+        {showPairing && (
+          <HostPairing
+            videoElement={videoElement}
+            startPairing={startPairing}
+            midGame={isCalibrated}
+            onConnected={() => closePairing(true)}
+            onClose={() => closePairing(false)}
+          />
+        )}
 
         {/* Vision View */}
         {viewMode === 'vision' && (
@@ -906,6 +1072,8 @@ export default function App() {
         onToggleViewMode={() => setViewMode((p) => (p === 'live' ? 'vision' : 'live'))}
         onHelpClick={() => setShowHelp(true)}
         onHistoryClick={() => setShowHistory(true)}
+        onRemoteClick={() => setShowPairing(true)}
+        remoteCount={remoteClients.length}
         missedDarts={missedDarts}
         onDismissMissedDarts={() => setMissedDarts(null)}
         prompt={turnPrompt}

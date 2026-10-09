@@ -46,6 +46,11 @@ export interface CorrectionEntry {
   from: Seg | null;
   /** Det rättade värdet (null för 'delete'). */
   to: Seg | null;
+  /**
+   * Fjärrskärmens clientId när rättningen gjordes där (se src/remote/).
+   * Saknas när den gjordes på kamerans egen skärm.
+   */
+  by?: string;
 }
 
 interface StorageLike {

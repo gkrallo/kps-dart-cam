@@ -15,7 +15,9 @@
     "phone:log": "node tools/det-stream.mjs"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.546.0",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1"
   },

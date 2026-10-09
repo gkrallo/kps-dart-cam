@@ -58,6 +58,8 @@ export interface RemoteHostOptions {
   onApplied?: (applied: AppliedOp) => void;
   /** Hur många accepterade förslags-id som följer med varje ögonblicksbild. */
   ackedWindow?: number;
+  /** En fjärrskärm har hälsat eller försvunnit. För indikatorn "fjärr ansluten (n)". */
+  onPeersChanged?: (clients: string[]) => void;
 }
 
 interface Peer {
@@ -83,6 +85,7 @@ export class RemoteHost {
   private acked: string[] = [];
   private readonly ackedWindow: number;
   private readonly onApplied?: (applied: AppliedOp) => void;
+  private readonly onPeersChanged?: (clients: string[]) => void;
   /** Vad som senast skickades, så att ett notifyChanged utan ändring inte ger en ny version. */
   private lastSentJson: string;
 
@@ -91,6 +94,7 @@ export class RemoteHost {
     this._version = opts.initialVersion ?? Date.now();
     this.ackedWindow = opts.ackedWindow ?? 16;
     this.onApplied = opts.onApplied;
+    this.onPeersChanged = opts.onPeersChanged;
     this.lastSentJson = this.matchJson();
   }
 
@@ -114,7 +118,7 @@ export class RemoteHost {
     const offState = transport.onStateChange((s) => {
       peer.open = s === 'open';
       // En fjärrskärm som försvinner får inte påverka spelet: bara glöm den.
-      if (s === 'closed') this.peers.delete(peer);
+      if (s === 'closed' && this.peers.delete(peer)) this.peersChanged();
     });
     peer.unsubscribe = () => {
       offMsg();
@@ -123,8 +127,12 @@ export class RemoteHost {
     this.peers.add(peer);
     return () => {
       peer.unsubscribe();
-      this.peers.delete(peer);
+      if (this.peers.delete(peer)) this.peersChanged();
     };
+  }
+
+  private peersChanged(): void {
+    this.onPeersChanged?.(this.connectedClients);
   }
 
   /**
@@ -166,7 +174,10 @@ export class RemoteHost {
   private handle(peer: Peer, msg: WireMessage): void {
     switch (msg.type) {
       case 'hello':
-        peer.clientId = msg.clientId;
+        if (peer.clientId !== msg.clientId) {
+          peer.clientId = msg.clientId;
+          this.peersChanged();
+        }
         // Alltid aktuell bild, oavsett knownVersion: den är några kB och
         // bekräftar samtidigt att kanalen fungerar åt båda håll.
         peer.transport.send(this.snapshot());
