@@ -18,6 +18,7 @@ import { Scoreboard } from './components/Scoreboard';
 import { HelpPanel } from './components/HelpPanel';
 import { RetrievalTip } from './components/RetrievalTip';
 import { TurnHistory } from './components/TurnHistory';
+import { BUILD_VERSION } from './buildInfo';
 
 const RETRIEVAL_TIP_SEEN_KEY = 'kps-dart-cam:retrieval-tip-seen';
 
@@ -754,13 +755,20 @@ export default function App() {
           </div>
         )}
 
-        {/* Debug HUD (?debug i URL:en) */}
-        {debugMode && debugInfo && (
+        {/* Debug HUD (?debug i URL:en). Byggversionen visas även innan
+            detektorn startat - med service workern är det inte självklart
+            att telefonen kör senaste bygget. */}
+        {debugMode && (
           <div className="absolute bottom-2 left-2 z-40 max-w-[70vw] bg-black/85 text-[10px] leading-tight font-mono text-emerald-300 px-2.5 py-2 rounded-lg border border-emerald-800/50 pointer-events-none">
-            <div className="text-white font-bold">{debugInfo.state}</div>
-            <div>baselineNoise {debugInfo.baselineNoise} <span className="text-slate-500">(&gt;500 → analys)</span></div>
-            <div>movementNoise {debugInfo.movementNoise} <span className="text-slate-500">(&gt;{debugInfo.motionThreshold} → rörelse)</span></div>
-            {debugInfo.lastAnalysis && <div className="text-amber-300 mt-1">{debugInfo.lastAnalysis}</div>}
+            {debugInfo && (
+              <>
+                <div className="text-white font-bold">{debugInfo.state}</div>
+                <div>baselineNoise {debugInfo.baselineNoise} <span className="text-slate-500">(&gt;500 → analys)</span></div>
+                <div>movementNoise {debugInfo.movementNoise} <span className="text-slate-500">(&gt;{debugInfo.motionThreshold} → rörelse)</span></div>
+                {debugInfo.lastAnalysis && <div className="text-amber-300 mt-1">{debugInfo.lastAnalysis}</div>}
+              </>
+            )}
+            <div className="text-slate-500 mt-1">build {BUILD_VERSION}</div>
           </div>
         )}
 

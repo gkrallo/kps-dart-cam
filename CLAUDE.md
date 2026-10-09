@@ -85,6 +85,7 @@ src/
   App.tsx                     Huvudkomponent. Kalibreringsflödet bor här.
   main.tsx                    Entry point
   types.ts                    Point, DartScore, TurnRecord
+  buildInfo.ts                BUILD_VERSION (git-hash + byggtid, satt av vite.config.ts)
   index.css                   Tailwind-import + animationer
 
   components/
@@ -97,6 +98,7 @@ src/
     TurnHistory.tsx           Turer bakåt: rätta, ta bort, lägga till missad pil
     HelpPanel.tsx             Hjälptexter (kalibrering, uttagning, rättning)
     RetrievalTip.tsx          Engångstips: ta ut de pilar som räknats först
+    UpdateBanner.tsx          Registrerar service workern, "Ny version finns – ladda om?"
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
@@ -578,8 +580,29 @@ emscripten-modul som exponerar sig på `window.cv` på tre olika sätt beroende 
 build. `useOpenCV` hanterar alla tre. Att importera npm-paketet direkt in i
 bundlen skulle lägga 10 MB i huvudchunken.
 
-**Ingen service worker ännu.** Appen har manifest och ikoner och kan installeras,
-men cachas inte offline. `opencv.js` är 10 MB och behöver precachas medvetet.
+**Service worker: precachar allt, frågar innan den byter version.**
+`vite-plugin-pwa` (devDependency, `generateSW`) bygger `dist/sw.js` som
+precachar hela bygget - **inklusive `opencv.js`** - och svarar cache-first.
+Workbox standardtak är 2 MB och hoppar då över `opencv.js` med bara en
+varning, därför `maximumFileSizeToCacheInBytes: 16 MB` i `vite.config.ts`.
+Uppmätt 2026-10-09: 10 poster, 11 154 KiB, varav `opencv.js` 10 618 KiB.
+Alla navigeringar - även `?remote` och `?debug`, samma `index.html` - besvaras
+ur cachen (`navigateFallback`). Scope och URL:er följer Vites `base`.
+- `registerType: 'prompt'`: en ny version laddas ner i bakgrunden men tar
+  aldrig över av sig själv. `UpdateBanner` (monterad bredvid `App` i
+  `main.tsx`) visar "Ny version finns – ladda om?"; bara knappen laddar om.
+  Ändra inte till `autoUpdate` - en omladdning mitt i en leg startar om
+  kameran och detektorn.
+- `manifest: false`: `public/manifest.webmanifest` används som den är (relativ
+  `start_url`/`scope`), pluginen genererar inget eget.
+- Första besöket efter en ny `opencv.js` hämtar den två gånger (sidans egen
+  laddning + precachen, som cachebustar med revision). Engångskostnad.
+- Byggversionen (`__BUILD_VERSION__`, kort git-hash + byggtid i UTC, bara tid
+  om git saknas) sätts via `define` och visas i `?debug`-panelen och längst
+  ner i hjälpen. Kolla den först när något beter sig konstigt: med service
+  workern är det inte självklart att telefonen kör senaste bygget.
+- `workbox-window` (ca 6 kB) kommer med i klientbundlen via
+  `virtual:pwa-register/react` - det enda som tillkommit i produktion.
 
 ---
 

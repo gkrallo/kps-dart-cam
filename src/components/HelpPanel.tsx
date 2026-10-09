@@ -1,4 +1,5 @@
 import { X, Crosshair, Ear, HandMetal, Pencil, Eye, AlertTriangle } from 'lucide-react';
+import { BUILD_VERSION } from '../buildInfo';
 
 interface Props {
   onClose: () => void;
@@ -81,6 +82,8 @@ export function HelpPanel({ onClose }: Props) {
         >
           Stäng
         </button>
+
+        <p className="text-center text-[10px] text-slate-600 font-mono">Version {BUILD_VERSION}</p>
       </div>
     </div>
   );
