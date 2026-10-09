@@ -280,6 +280,27 @@ export const useDartDetector = (
       snapshots.forEach((s) => s.delete());
       snapshots = [];
       pushSnapshot();
+      captureEmptyChroma();
+    };
+
+    /**
+     * Färgmättnad (max - min av R, G, B) för den tomma tavlan, en byte per
+     * pixel. Räknas när nivå 0 sätts. Används av colorSaysMaterial: en skugga
+     * gör ytan mörkare men behåller (eller sänker) mättnaden, en färgad vinge
+     * höjer den kraftigt.
+     */
+    let lastFrame: any = null;
+    let emptyChroma: Uint8Array | null = null;
+    const captureEmptyChroma = () => {
+      if (!lastFrame) return;
+      const d: Uint8Array = lastFrame.data;
+      const n = lastFrame.rows * lastFrame.cols;
+      const out = new Uint8Array(n);
+      for (let i = 0, o = 0; i < n; i++, o += 4) {
+        const r = d[o], g = d[o + 1], b = d[o + 2];
+        out[i] = Math.max(r, g, b) - Math.min(r, g, b);
+      }
+      emptyChroma = out;
     };
 
     /**
@@ -569,7 +590,10 @@ const STARTUP_GRACE_MS = 2000;
       cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
       cv.cvtColor(frame, rawGray, cv.COLOR_RGBA2GRAY);
       cv.GaussianBlur(rawGray, rawGray, new cv.Size(5, 5), 0);
-      frame.delete();
+      // Behålls (ingen kopia - imread skapar ändå en ny Mat varje gång) för
+      // färgkontrollen i skuggtestet, se colorSaysMaterial.
+      lastFrame?.delete();
+      lastFrame = frame;
     };
 
     if (videoElement.videoWidth === 0) return;
@@ -618,6 +642,62 @@ const STARTUP_GRACE_MS = 2000;
       }
       return samples;
     };
+
+    /**
+     * Färgkontroll när gråskaletestet säger "skugga" eller "reflex".
+     *
+     * Uppmätt 2026-10-09: en pil med röd vinge och svart pipa landade strax
+     * utanför D18. Pipan syntes knappt mot den svarta sifferringen, och den
+     * tunna röda vingen släppte igenom kantens tryckta mönster - i gråskala
+     * "samma mönster, 28 % mörkare", alltså skugga, och pilen räknades aldrig.
+     * I färg var det uppenbart: mättnaden i blobben 81 mot 7,6 på tom tavla
+     * (samma bildpar offline; gråskaletestet säger skugga även där). En skugga
+     * sänker mättnaden.
+     *
+     * Bara pixlar där tavlan var TOM före förändringen räknas (toppen = tom
+     * tavla där): en skugga över en gammal röd vinge ska inte frikännas.
+     * Svarta vingar har ingen mättnad och får ingen hjälp härifrån.
+     */
+    const colorSaysMaterial = (
+      rect: { x: number; y: number; width: number; height: number },
+      reference: any,
+    ): string | null => {
+      if (!lastFrame || !emptyChroma || snapshots.length === 0) return null;
+      const empty = snapshots[0];
+      const W = rawGray.cols;
+      if (lastFrame.cols !== W || emptyChroma.length !== W * rawGray.rows) return null;
+      const rgba: Uint8Array = lastFrame.data;
+      const x0 = Math.max(0, rect.x);
+      const y0 = Math.max(0, rect.y);
+      const x1 = Math.min(W, rect.x + rect.width);
+      const y1 = Math.min(rawGray.rows, rect.y + rect.height);
+      const stepX = Math.max(1, Math.floor((x1 - x0) / 60));
+      const stepY = Math.max(1, Math.floor((y1 - y0) / 60));
+      let sumNow = 0;
+      let sumEmpty = 0;
+      let n = 0;
+      for (let y = y0; y < y1; y += stepY) {
+        for (let x = x0; x < x1; x += stepX) {
+          const cur = rawGray.ucharPtr(y, x)[0];
+          const base = reference.ucharPtr(y, x)[0];
+          if (Math.abs(cur - base) <= RAW_DIFF_THRESHOLD) continue;
+          if (Math.abs(base - empty.ucharPtr(y, x)[0]) > RAW_DIFF_THRESHOLD) continue;
+          const i = y * W + x;
+          const o = i * 4;
+          sumNow += Math.max(rgba[o], rgba[o + 1], rgba[o + 2]) - Math.min(rgba[o], rgba[o + 1], rgba[o + 2]);
+          sumEmpty += emptyChroma[i];
+          n++;
+        }
+      }
+      if (n < 40) return null;
+      const now = sumNow / n;
+      const was = sumEmpty / n;
+      return now - was >= COLOR_MATERIAL_DELTA
+        ? `färg: mättnad ${now | 0} mot ${was | 0} på tom tavla - föremål, inte skugga`
+        : null;
+    };
+    /** Mättnadsökning som räknas som föremål. Uppmätt fall: +74; skugga ger <= 0. */
+    const COLOR_MATERIAL_DELTA = 25;
 
     /**
      * Letar pilform i en tröskad diffbild (rawThresh eller baseThresh).
@@ -792,7 +872,11 @@ const STARTUP_GRACE_MS = 2000;
         // Skuggtest FÖRE formtestet: en skugga kan mycket väl vara avlång och
         // klara både elongation och konfidens. Det som avslöjar den är att
         // tavlans eget mönster lyser igenom - se shadowTest.ts.
-        const lighting = classifyShadow(sampleBlob(bb, reference));
+        let lighting = classifyShadow(sampleBlob(bb, reference));
+        if (lighting.isLightingOnly) {
+          const why = colorSaysMaterial(bb, reference);
+          if (why) lighting = { ...lighting, isLightingOnly: false, decided: false, reason: why };
+        }
 
         // Formkontroll: en pil är avlång. Runda blobbar är skuggor eller brus.
         // minAreaRect görs i JS (blobGroups.ts) i stället för via OpenCV: en
@@ -1829,7 +1913,7 @@ const STARTUP_GRACE_MS = 2000;
         warped, gray, diff, thresh, diffPrev, threshPrev,
         rawGray, rawDiff, rawThresh, baseDiff, baseThresh, emptyDiff, emptyThresh,
         censusDiff, censusThresh, priorDiff, priorThresh, newOnly,
-        kernel, baseline, previous, emptyBaseline,
+        kernel, baseline, previous, emptyBaseline, lastFrame,
       ].forEach((m) => m?.delete());
       snapshots.forEach((m) => m?.delete());
     };
