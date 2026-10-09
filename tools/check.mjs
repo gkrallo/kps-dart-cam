@@ -47,12 +47,21 @@ await main(async () => {
     } catch {
       /* offline - hoppa över jämförelsen */
     }
+    // Byggversionen (git-hash + byggtid) finns bara i byggen med service
+    // worker; äldre byggen visas med bara filhashen.
+    const version = await session.evaluate('window.__buildVersion ?? null').catch(() => null);
+    const label = version ? `${loaded}, ${version}` : loaded;
+    // Med service worker kan ett nytt bygge ligga nedladdat och vänta bakom
+    // "Ny version finns" - då är det reload.mjs som tar fram det.
+    const waiting = await session
+      .evaluate('navigator.serviceWorker?.getRegistration().then((r) => !!r?.waiting) ?? false')
+      .catch(() => false);
     if (target.url.includes('localhost')) {
       say(warn, `kör lokalt bygge (${target.url}) - localStorage är TOMT här, ingen sparad kalibrering`);
     } else if (deployed && loaded !== deployed) {
-      say(bad, `gammalt bygge laddat: ${loaded}, publicerat är ${deployed}\n        → node tools/reload.mjs "?debug"`);
+      say(bad, `gammalt bygge laddat: ${label}, publicerat är ${deployed}${waiting ? ' (nytt bygge väntar i service workern)' : ''}\n        → node tools/reload.mjs "?debug"`);
     } else {
-      say(ok, `bygge ${loaded}${deployed ? ' (= publicerat)' : ''}`);
+      say(ok, `bygge ${label}${deployed ? ' (= publicerat)' : ''}`);
     }
 
     // 3. ?debug

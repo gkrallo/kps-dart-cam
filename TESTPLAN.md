@@ -93,7 +93,7 @@ datorn. Vill du slippa kabeln: `adb tcpip 5555` och `adb connect <ip>:5555`.
 | `npm run phone:check` | Telefon, bygge, `?debug`, att videon rullar, tavlans storlek i bild |
 | `npm run phone:log` | Strömmar `[det]`/`[analyse]`-raderna med klocktid till `capture/<datum>/det-log.txt` |
 | `node tools/grab.mjs <etikett>` | Sparar bildruta + maskbild + tillstånd i `capture/<datum>/NN-<etikett>/` |
-| `node tools/reload.mjs "?debug&mask"` | Laddar om utan cache, säger vilket bygge som kom upp |
+| `node tools/reload.mjs "?debug&mask"` | Tar fram senaste bygget (även förbi service workerns "Ny version finns"), säger vilket bygge som kom upp |
 | `node tools/ev.mjs "<uttryck>"` | Kör JS i fliken |
 
 Verktygen har aldrig körts mot en riktig telefon. Räkna med fem minuter
