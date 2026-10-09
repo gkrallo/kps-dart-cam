@@ -87,6 +87,16 @@ export default function App() {
    * och då är `currentDarts` redan tom, så det måste sättas där turen tar slut.
    */
   const [awaitingRetrieval, setAwaitingRetrieval] = useState(false);
+  /**
+   * Detektorn tar bilden i startögonblicket som "tom tavla". Sparas
+   * kalibreringen mitt i en tur sitter pilar kvar, och de blir då en del av
+   * tavlan för resten av omgången - osynliga för avstämningen, och tavlan
+   * blir aldrig "tom" igen. Uppmätt 2026-10-09: telefonen gungade när
+   * Kristian rättade på skärmen, bilden ändrades, han kalibrerade om med en
+   * pil i 1:an kvar, och den räknades aldrig. Då väntar detektorn tills
+   * spelaren bekräftat att tavlan är tom.
+   */
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
   /** Något har hängt sig - då, och bara då, erbjuds "Avsluta tur". */
   const [showManualNext, setShowManualNext] = useState(false);
   const [missedDarts, setMissedDarts] = useState<
@@ -450,7 +460,7 @@ export default function App() {
       // Vanligaste orsaken är tappad zoom efter ett appbyte - försök rätta
       // den först. Kommer bilden tillbaka släpper detektorn varningen själv.
       setZoomNudge((n) => n + 1);
-      audioEngine.speak('Kameran ser en annan bild än vid kalibreringen. Kontrollera telefonen och kalibrera om.');
+      audioEngine.speak('Kameran ser en annan bild än vid kalibreringen. Dra ut pilarna, kontrollera telefonen och kalibrera om.');
     }
   }, []);
 
@@ -498,7 +508,7 @@ export default function App() {
     // Detektorn får inte gå medan uppstartskortet eller spelinställningarna
     // ligger över: pilar som registreras då hamnar i fel match, eller i en
     // match användaren just höll på att byta ut.
-    isCalibrated && !showSetup && !showResume,
+    isCalibrated && !showSetup && !showResume && !confirmEmpty,
     motionThreshold,
     debugCanvasRef,
     handleDartDetected,
@@ -603,6 +613,10 @@ export default function App() {
 
       setTransformMatrix(cv.getPerspectiveTransform(srcMat, dstMat));
       setIsCalibrated(true);
+      if (state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval)) {
+        setConfirmEmpty(true);
+        audioEngine.speak('Dra ut alla pilar ur tavlan och tryck Tavlan är tom.');
+      }
     } catch (err) {
       console.error('Kalibrering misslyckades:', err);
     } finally {
@@ -750,12 +764,34 @@ export default function App() {
           </div>
         )}
 
+        {confirmEmpty && isCalibrated && (
+          <div className="absolute inset-x-3 top-20 z-40 bg-amber-950/95 border border-amber-500/60 text-amber-100 rounded-2xl px-4 py-4 shadow-2xl text-center flex flex-col gap-3">
+            <div className="font-black text-lg">Dra ut alla pilar</div>
+            <div className="text-sm">
+              Avläsningen tar tavlan som den ser ut nu som "tom". Pilar som sitter kvar räknas
+              aldrig. De som redan lästs av ligger kvar i turen.
+            </div>
+            <button
+              onClick={() => {
+                setConfirmEmpty(false);
+                // Var turen redan färdigkastad drogs pilarna ut medan
+                // detektorn stod still - den tömningen måste ändå avsluta turen.
+                const full = !!state && state.currentDarts.length >= state.view.available;
+                if (awaitingRetrieval || full) handleBoardCleared();
+              }}
+              className="bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black py-3 rounded-xl"
+            >
+              Tavlan är tom
+            </button>
+          </div>
+        )}
+
         {sceneChanged && isCalibrated && (
           <div className="absolute top-20 left-3 right-3 z-30 bg-red-950/95 border border-red-500/60 text-red-100 rounded-2xl px-4 py-3 shadow-2xl text-center">
             <div className="font-black text-lg">Bilden har ändrats</div>
             <div className="text-sm">
               Zoom, kamera eller ljus är inte som vid kalibreringen. Avläsningen står still.
-              Tryck <b>Kalibrera om</b> när tavlan är tom.
+              Dra ut pilarna först, tryck sedan <b>Kalibrera om</b>.
             </div>
           </div>
         )}

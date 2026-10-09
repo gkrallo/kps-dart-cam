@@ -184,7 +184,9 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       const moved = !orig || orig.some((p, i) => Math.hypot(p.x - pts[i].x, p.y - pts[i].y) > 3);
       if (moved) {
         calLog('kontroll hoppad över: punkterna har ändrats', { orig, pts });
-        setDetectStatus(null);
+        // Töm bara vårt eget "kontrollerar..." - har användaren tryckt Auto
+        // står Autos besked där, och det ska inte försvinna (2026-10-09).
+        setDetectStatus((s) => (s?.startsWith('Sparad kalibrering återställd') ? null : s));
         return;
       }
       let align: ReturnType<typeof alignSectorsToBoard> = null;
