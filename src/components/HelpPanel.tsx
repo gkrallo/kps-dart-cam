@@ -1,4 +1,4 @@
-import { X, Crosshair, Ear, HandMetal, Pencil, Eye, AlertTriangle } from 'lucide-react';
+import { X, Crosshair, Ear, HandMetal, Pencil, Eye, AlertTriangle, MonitorSmartphone } from 'lucide-react';
 import { BUILD_VERSION } from '../buildInfo';
 
 interface Props {
@@ -47,6 +47,12 @@ const SECTIONS: Section[] = [
     title: 'Vision-vyn',
     body:
       'Visar vad datorseendet faktiskt ser: tavlans ringar och var det tror att pilarna suttit. Bra för att felsöka en dålig kalibrering eller förstå varför en pil lästes fel.',
+  },
+  {
+    icon: MonitorSmartphone,
+    title: 'Fjärrskärm',
+    body:
+      'En surfplatta, telefon eller dator kan visa ställningen stort och rätta pilar, lägga till missade, ångra och byta spelare – så att ingen behöver röra telefonen i stativet. Tryck "Fjärrskärm" innan du kalibrerar (eller "Fjärr" i panelen senare), skanna QR-koden med den andra enheten, tryck "Nästa" och håll upp dess QR-kod framför kameran. Båda måste vara på samma wifi. Laddas telefonen om behöver fjärrskärmen anslutas igen; den visar senast kända ställning under tiden.',
   },
 ];
 

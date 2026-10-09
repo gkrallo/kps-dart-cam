@@ -10,6 +10,12 @@ interface Props {
   onDeleteThrow: (actionIndex: number) => void;
   onInsertThrow: (actionIndex: number, seg: Seg) => void;
   onClose: () => void;
+  /**
+   * En pil (eller en lucka) valdes för rättning. Fjärrskärmen noterar då
+   * vilken version av matchen spelaren såg - landar en pil medan knappsatsen
+   * är öppen ska kameran avvisa rättningen i stället för att rätta fel pil.
+   */
+  onEditorOpen?: () => void;
 }
 
 interface TurnGroup {
@@ -48,7 +54,7 @@ const MAX_TURNS = 12;
  * pilen om utgången var en dubbel - att bara lägga till sist hade gett fel
  * resultat i båda fallen.
  */
-export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, onClose }: Props) {
+export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, onClose, onEditorOpen }: Props) {
   const [editing, setEditing] = useState<
     { mode: 'edit' | 'insert'; actionIndex: number; current: Seg | null; suggestions?: Seg[] } | null
   >(null);
@@ -59,7 +65,10 @@ export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, 
   const insertButton = (actionIndex: number, key: string) => (
     <button
       key={key}
-      onClick={() => setEditing({ mode: 'insert', actionIndex, current: null })}
+      onClick={() => {
+        onEditorOpen?.();
+        setEditing({ mode: 'insert', actionIndex, current: null });
+      }}
       title="Lägg till en pil som missades här"
       className="w-5 h-10 sm:h-12 rounded-md text-slate-600 hover:text-blue-300 hover:bg-slate-800 flex items-center justify-center shrink-0"
     >
@@ -130,7 +139,10 @@ export function TurnHistory({ match, onEditThrow, onDeleteThrow, onInsertThrow, 
                   <div key={e.ai} className="flex items-center">
                     {insertButton(e.ai, `pre-${e.ai}`)}
                     <button
-                      onClick={() => setEditing({ mode: 'edit', actionIndex: e.ai, current: e.dart, suggestions: e.alt })}
+                      onClick={() => {
+                        onEditorOpen?.();
+                        setEditing({ mode: 'edit', actionIndex: e.ai, current: e.dart, suggestions: e.alt });
+                      }}
                       className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl border bg-slate-800 active:scale-95 flex flex-col items-center justify-center font-bold shrink-0 ${
                         e.alt?.length ? 'border-amber-400 text-amber-300' : 'border-blue-500/40 text-blue-300'
                       }`}

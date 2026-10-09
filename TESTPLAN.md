@@ -302,12 +302,15 @@ Oberoende observationer; kör och samla.
 
 ---
 
-## Del H: fjärrskärm (20 min, kameran S25 + surfplattan, samma wifi)
+## Del H: fjärrskärm (30 min, kameran S25 + surfplattan, samma wifi)
 
-Genomkört en gång i headless Chrome på datorn (två flikar, byggd app): parkoppling
-med inklistrad kod, `hello`/`snapshot` över riktig WebRTC, fjärrskärmen hämtade
-inte `opencv.js`. Det som återstår är riktiga enheter, riktiga QR-koder och
-riktigt wifi.
+Genomkört i headless Chrome på datorn (två flikar, byggd app, falsk kamera):
+parkoppling med inklistrad kod över riktig WebRTC, rättning av en flaggad pil
+via snabbvalet, tillägg av en missad pil, "Nästa spelare", rättningsloggen fick
+`by`, omladdad fjärrskärm visade "Frånkopplad – visar senast kända läge" och
+värden släppte den. Fjärrskärmen hämtade varken `opencv.js` eller `App-*.js`.
+Det som återstår är riktiga enheter, riktiga QR-koder, riktigt wifi och
+riktiga kast.
 
 Före: `node tools/reload.mjs "?debug"` på telefonen; öppna appen på surfplattan
 en gång med nät (så att service workern cachar den).
@@ -333,6 +336,37 @@ en gång med nät (så att service workern cachar den).
    Varningen om pausad avläsning ska synas; efter anslutningen säger telefonen
    "Ta bort den ur bild, avläsningen startar om fem sekunder" och frågar "Dra
    ut alla pilar". Ingen pil får registreras medan surfplattan är i bild.
+7. **Läsbar från linjen.** Ställ surfplattan där den ska stå och gå till
+   kastlinjen (2,4 m). Syns vem som kastar och vad hen har kvar? Prova både
+   stående och liggande surfplatta.
+8. **Kast syns direkt.** Kasta tre pilar. Varje pil ska synas på surfplattan
+   inom någon sekund efter att telefonen läst upp den.
+9. **Rätta från surfplattan.** Placera en pil nära en tråd så att den flaggas
+   (gul ram, "?"). Tryck på den på surfplattan och välj snabbvalet. Telefonen
+   ska säga "Rättat: X blir Y", och ställningen ska ändras på båda.
+   Kontrollera efteråt med `node tools/corrections.mjs` att raden har
+   "(fjärr ...)".
+10. **Lägg till missad pil** med "+" på surfplattan, och en äldre pil via
+    **Turer** → "+" mellan två pilar. Telefonen säger "Tillagd: ...".
+11. **Två samtidigt.** Öppna rättningen av pil 2 på surfplattan, kasta pil 3
+    innan du väljer fält. Valet ska avvisas med "Matchen ändrades - försök
+    igen", och pil 2 ska vara orörd.
+12. **Ångra och Nästa spelare** från surfplattan, båda med bekräftelse.
+    Telefonen läser upp nästa spelare. Dra sedan ut pilarna: nästa spelares
+    tur får INTE avslutas av tömningen.
+13. **Skärmen släcks inte.** Låt surfplattan ligga orörd i 5 min mitt i en leg.
+14. **Wifiglapp.** Stäng av wifi på surfplattan i 30 s. Efter ca 15 s ska
+    "Ingen kontakt med kameran" synas och knapparna låsas; slå på wifi igen -
+    kommer kontakten tillbaka av sig själv? (Gör den inte det: notera, och
+    parkoppla om.)
+15. **Omladdning av surfplattan** mitt i en leg: senast kända ställning syns
+    direkt, med "Frånkopplad"; **Anslut igen** → ny parkoppling. Telefonen ska
+    inte ha märkt något, och "fjärr ansluten" ska försvinna inom ca 15 s.
+16. **Telefonen laddas om** (`node tools/reload.mjs`): surfplattan går till
+    "Frånkopplad"; parkoppla om. Matchen på telefonen är oförändrad.
+17. **Två fjärrskärmar** (surfplattan + en telefon eller datorn via klistra in):
+    båda visar samma sak, båda kan rätta, "fjärr ansluten (2)".
+18. **Laptop utan kamera** via **Klistra in kod** åt båda håll.
 
 ---
 

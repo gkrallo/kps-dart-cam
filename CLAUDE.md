@@ -109,6 +109,8 @@ src/
       QrCode.tsx              QR-kod som SVG (qrcode-generator, felkorrigering L)
       QrCameraScanner.tsx     Egen kamera för QR-läsning (bara på fjärrskärmen)
       CodeTools.tsx           Kopiera/dela/klistra in koden - reservvägen utan kamera
+      RemoteScoreboard.tsx    Fjärrskärmens resultattavla (läsbar från 2,4 m, porträtt/landskap)
+      RemoteStatusBar.tsx     Ansluten / ingen kontakt / frånkopplad – visar senast kända läge
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
@@ -116,6 +118,7 @@ src/
     useMatch.ts               React-omslag för spelmotorn (localStorage-persistens)
     useRemoteHost.ts          Kamerans RemoteHost, bunden till samma Match som useMatch; parkoppling
     useRemoteReplica.ts       Fjärrskärmens RemoteReplica som React-tillstånd
+    useWakeLock.ts            Håller fjärrskärmens skärm tänd, begärs om vid synlighetsbyte
 
   game/                       Regelmotor, portad från kps-dart-scorecard
     types.ts                  Seg, MatchState, Match, MatchAction, Engine
@@ -177,7 +180,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 331 tester
+npm test         # 372 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -475,7 +478,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen och regelmotorn — 331 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen, regelmotorn och fjärrskärmens synk — 372 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
@@ -668,6 +671,30 @@ en egen binär packning av fingeravtryck och kandidater.
   läge och måste parkopplas om (utan server går ICE inte att förhandla om).
 - Rättningar från fjärrskärmen loggas i rättningsloggen med `by` =
   fjärrskärmens clientId, och läses upp på kameran ("Rättat: 6 blir 10").
+- **Fjärrskärmen laddar aldrig opencv.js.** `main.tsx` väljer `RemoteApp`
+  eller `App` med `React.lazy`, och `RemoteApp` importerar varken
+  `CameraFeed`, `useOpenCV` eller `useDartDetector`. Verifierat 2026-10-09
+  i byggd app (headless Chrome, `performance.getEntriesByType('resource')`):
+  `?remote` hämtade index, css, manifest, `RemoteApp-*.js`, en delad chunk
+  och workbox-window - varken `opencv.js` eller `App-*.js`. Undantaget är
+  service workerns precache: installeras den från `?remote` laddas
+  `opencv.js` ner i bakgrunden en gång. Det är medvetet - samma cache för
+  båda lägena, och surfplattan kan då också vara kamera.
+- **Rättningsvyn skickar versionen från när den öppnades**, inte när
+  knappen trycks (`propose(op, baseVersion)`, `TurnHistory.onEditorOpen`).
+  Annars hinner en pil landa medan knappsatsen är öppen, fjärrskärmen får
+  den nya bilden, och rättningen godtas mot ett index som pekar på en annan
+  pil. "Lägg till pil" och "Nästa spelare" bär inget index och avvisas inte
+  av den anledningen.
+- **Livstecken:** fjärrskärmen pingar var 5:e s. En datakanal stängs inte vid
+  ett wifiglapp, den blir bara tyst - hörs kameran inte på 15 s visas "Ingen
+  kontakt med kameran" och rättning låses tills den hörs igen.
+- **Wake Lock** (`useWakeLock`) håller fjärrskärmen tänd; webbläsaren släpper
+  låset när fliken döljs, så det begärs om vid `visibilitychange` och vid
+  första tryck.
+- Fjärrskärmen kan inte starta en ny match eller leg - det är inte en
+  operation useMatch har som förslag, och en ny match ska startas där
+  kameran står (spelarna, kalibreringen). "Nästa spelare" är `endTurn`.
 
 ---
 

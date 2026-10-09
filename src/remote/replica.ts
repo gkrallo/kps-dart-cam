@@ -165,11 +165,31 @@ export class RemoteReplica {
   }
 
   /**
+   * Livstecken. Datakanalen stängs inte vid ett wifiglapp - den blir bara
+   * tyst - så det enda sättet att se att kameran inte hörs är att fråga.
+   * Svaret (pong) uppdaterar `lastHeardAt`.
+   */
+  ping(): void {
+    if (!this.transport || !this.open) return;
+    this.transport.send({ v: PROTOCOL_VERSION, type: 'ping', matchId: this.snap?.matchId ?? '', t: this.now() });
+  }
+
+  /** Har kameran hörts av inom `maxAgeMs`? Falskt om kanalen inte är öppen. */
+  isFresh(maxAgeMs: number): boolean {
+    return this.connected && this.lastHeardAt !== null && this.now() - this.lastHeardAt <= maxAgeMs;
+  }
+
+  /**
    * Skickar ett förslag. Löses när en bild från host bekräftar att det
    * tillämpats; avvisas med hostens skäl (`Error.message`, på svenska), eller
    * vid timeout eller frånkoppling.
+   *
+   * `baseVersion`: versionen spelaren SÅG när hen valde pilen. Standard är den
+   * aktuella, men en rättningsvy som stått öppen medan en pil landade ska
+   * skicka versionen från när den öppnades - annars godtar kameran ett index
+   * som nu kan peka på en annan pil.
    */
-  propose(op: RemoteOp): Promise<void> {
+  propose(op: RemoteOp, baseVersion?: number): Promise<void> {
     const t = this.transport;
     if (!t || !this.connected || !this.snap) {
       return Promise.reject(new Error(REASON_NOT_CONNECTED));
@@ -187,7 +207,7 @@ export class RemoteReplica {
       type: 'propose',
       matchId: this.snap.matchId,
       proposalId,
-      baseVersion: this.snap.version,
+      baseVersion: baseVersion ?? this.snap.version,
       op,
     });
     return promise;

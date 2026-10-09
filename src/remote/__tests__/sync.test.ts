@@ -463,4 +463,60 @@ describe('synk: host och fjärrskärm', () => {
     await settle(pair);
     expect(got).toEqual([42]);
   });
+  it('livstecken: ping ger pong, och en tyst kanal syns som ej färsk', async () => {
+    const r = rig();
+    let now = 1_000_000;
+    let mute = false;
+    const pair = createLoopbackPair({ drop: () => mute });
+    r.host.attach(pair.host);
+    const rep = new RemoteReplica({ storage: memStorage(), now: () => now });
+    rep.attach(pair.remote);
+    await settle(pair);
+    expect(rep.isFresh(15000)).toBe(true);
+
+    now += 20000;
+    expect(rep.isFresh(15000)).toBe(false);
+    rep.ping();
+    await settle(pair);
+    expect(rep.isFresh(15000)).toBe(true);
+
+    // Wifiglapp: kanalen står öppen men inget kommer fram.
+    mute = true;
+    now += 20000;
+    rep.ping();
+    await settle(pair);
+    expect(rep.connected).toBe(true);
+    expect(rep.isFresh(15000)).toBe(false);
+  });
+
+  it('en rättningsvy som stått öppen medan en pil landade avvisas', async () => {
+    const r = rig();
+    const { pair, rep } = connect(r);
+    local(r, (m) => throwDart(m, { v: 1, m: 1 }));
+    await settle(pair);
+    const seenWhenOpened = rep.version;
+    // Pilen landar och fjärrskärmen hinner få den nya bilden innan knappen trycks.
+    local(r, (m) => throwDart(m, { v: 2, m: 1 }));
+    await settle(pair);
+    expect(rep.version).toBeGreaterThan(seenWhenOpened);
+    expect(
+      await failure(rep.propose({ kind: 'replace', actionIndex: 0, seg: { v: 20, m: 1 } }, seenWhenOpened)),
+    ).toBe(REASON_STALE);
+    expect(matchState(r.match).log.map((l) => l.dart.v)).toEqual([1, 2]);
+  });
+
+  it('värden säger till när fjärrskärmar hälsar och försvinner', async () => {
+    const seen: number[] = [];
+    const host = new RemoteHost(mk(), { onPeersChanged: (c) => seen.push(c.length) });
+    const a = createLoopbackPair();
+    const b = createLoopbackPair();
+    host.attach(a.host);
+    host.attach(b.host);
+    new RemoteReplica({ storage: memStorage() }).attach(a.remote);
+    new RemoteReplica({ storage: memStorage() }).attach(b.remote);
+    await settle(a, b);
+    expect(host.connectedClients).toHaveLength(2);
+    a.remote.close();
+    expect(seen).toEqual([1, 2, 1]);
+  });
 });
