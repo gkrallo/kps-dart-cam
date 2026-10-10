@@ -6,6 +6,7 @@ import { ThrowEditor } from './components/ThrowEditor';
 import { TurnHistory } from './components/TurnHistory';
 import { GameSetup } from './components/GameSetup';
 import { RemoteCalibration, RemoteConfirmEmpty } from './components/remote/RemoteCalibration';
+import { FullscreenToggle } from './components/remote/FullscreenToggle';
 import { useRemoteReplica } from './hooks/useRemoteReplica';
 import { useWakeLock } from './hooks/useWakeLock';
 import { label as segLabel } from './game/segments';
@@ -143,7 +144,14 @@ export default function RemoteApp() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-slate-950 text-slate-50 font-sans overflow-hidden">
-      <RemoteStatusBar status={status} onReconnect={() => setPairing(true)} onCalibration={() => setShowCal(true)} />
+      <div className="flex items-start gap-2 pr-3">
+        <div className="flex-1 min-w-0">
+          <RemoteStatusBar status={status} onReconnect={() => setPairing(true)} onCalibration={() => setShowCal(true)} />
+        </div>
+        <div className="pt-2">
+          <FullscreenToggle />
+        </div>
+      </div>
 
       {state ? (
         <RemoteScoreboard

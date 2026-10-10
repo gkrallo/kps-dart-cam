@@ -9,6 +9,9 @@ import { CodePaste, CodeShare } from '../remote/CodeTools';
 import { TurnHistory } from '../TurnHistory';
 import { GameSetup } from '../GameSetup';
 import { RemoteCalibration, RemoteConfirmEmpty } from '../remote/RemoteCalibration';
+import { FullscreenToggle } from '../remote/FullscreenToggle';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { createMatch, endTurn, matchState, throwDart } from '../../game/match';
 
 /**
@@ -147,5 +150,22 @@ describe('fjärrskärmens vyer renderar utan att krascha', () => {
     expect(renderToStaticMarkup(createElement(RemoteConfirmEmpty, { locked: false, onConfirm: noop }))).toContain(
       'Tavlan är tom',
     );
+  });
+  it('helskärmsknappen döljs där API:t saknas (här: ingen DOM)', () => {
+    expect(renderToStaticMarkup(createElement(FullscreenToggle))).toBe('');
+  });
+
+  it('fjärrskärmens manifest öppnar ?remote i helskärm, i valfri riktning', () => {
+    const file = path.resolve(__dirname, '../../../public/manifest-remote.webmanifest');
+    const m = JSON.parse(readFileSync(file, 'utf8'));
+    expect(m.start_url).toBe('./?remote');
+    expect(m.id).toBe('./?remote');
+    expect(m.scope).toBe('./');
+    expect(m.display).toBe('fullscreen');
+    expect(m.orientation).toBe('any');
+    // Kameraappens manifest är orört: stående, start i kameraläget.
+    const cam = JSON.parse(readFileSync(path.resolve(__dirname, '../../../public/manifest.webmanifest'), 'utf8'));
+    expect(cam.start_url).toBe('./');
+    expect(cam.orientation).toBe('portrait');
   });
 });

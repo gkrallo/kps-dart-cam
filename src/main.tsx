@@ -15,6 +15,15 @@ import './index.css';
 // bakom lazy kostar enhetsläget en extra liten fil, som service workern
 // ändå har i cachen.
 const isRemote = new URLSearchParams(window.location.search).has('remote');
+
+// Installeras fjärrskärmen på hemskärmen ska den öppna ?remote, i helskärm
+// och i valfri riktning (surfplattan står ofta på tvären) - inte kameraappen
+// i stående läge. Samma index.html för båda, så manifestet byts här.
+if (isRemote) {
+  document
+    .querySelector('link[rel="manifest"]')
+    ?.setAttribute('href', `${import.meta.env.BASE_URL}manifest-remote.webmanifest`);
+}
 const Root = isRemote ? lazy(() => import('./RemoteApp')) : lazy(() => import('./App'));
 
 // UpdateBanner ligger bredvid roten, inte inuti, så att samma rad gäller för
