@@ -334,8 +334,10 @@ en gång med nät (så att service workern cachar den).
    siffra på **Fjärr**-knappen.
 6. **Parkoppling mitt i match**, från **Fjärr**-knappen, med en pil i tavlan.
    Varningen om pausad avläsning ska synas; efter anslutningen säger telefonen
-   "Ta bort den ur bild, avläsningen startar om fem sekunder" och frågar "Dra
-   ut alla pilar". Ingen pil får registreras medan surfplattan är i bild.
+   "Gå ur bild och tryck Tavlan är tom" och frågar "Dra ut alla pilar" - på
+   telefonen OCH på surfplattan. Ingen pil får registreras innan frågan
+   besvarats. Svara från surfplattan när du gått ur bild, kasta en tur och dra
+   ut pilarna: turen ska byta av sig själv.
 7. **Läsbar från linjen.** Ställ surfplattan där den ska stå och gå till
    kastlinjen (2,4 m). Syns vem som kastar och vad hen har kvar? Prova både
    stående och liggande surfplatta.

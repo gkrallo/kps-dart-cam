@@ -32,13 +32,6 @@ import type { HostCommand } from './remote/protocol';
 import { renderCalibrationPreview } from './remote/calPreview';
 import { loadCalibration } from './utils/calibration';
 
-/**
- * Hur länge avläsningen står kvar i paus efter en parkoppling. Fjärrskärmen
- * hölls nyss upp framför kameran, och startar detektorn medan den är kvar i
- * bild tas den som "tom tavla". Tiden räcker för att sänka den.
- */
-const PAIRING_RESUME_MS = 5000;
-
 /** dartMath-etiketten för ett fält - det audioEngine.scoreText förstår. */
 function dartLabel(s: Seg): string {
   if (s.v === 0) return 'MISS';
@@ -733,30 +726,34 @@ export default function App() {
   }, [previewWanted]);
 
   const [showPairing, setShowPairing] = useState(false);
-  /** Paus efter parkopplingen, se PAIRING_RESUME_MS. */
-  const [pairingHold, setPairingHold] = useState(false);
 
+  /**
+   * Efter parkopplingen startar detektorn om, och vid omstarten tar den
+   * bilden som den är som "tom tavla" (emptyBaseline). Den bilden avgör
+   * resten av omgången om tavlan tömts - och därmed spelarbytet.
+   *
+   * Förut startade den om efter fasta 5 s. Stod surfplattan eller den som
+   * höll den kvar i bild då blev referensen fel, tömningen kändes aldrig
+   * igen och turerna slutade byta av sig själva (en sannolik orsak till
+   * det Kristian såg 2026-10-09). Referensen läker inte heller av sig själv
+   * när pilar väl registrerats. Därför väntar detektorn i stället på "Tavlan
+   * är tom", som numera går att svara på från fjärrskärmen - när den som
+   * parkopplade gått ur bild.
+   */
   const closePairing = useCallback(
     (connected: boolean) => {
       setShowPairing(false);
+      const detectorWasRunning = isCalibrated && !showSetup && !showResume;
       if (connected) {
         audioEngine.speak(
-          isCalibrated
-            ? 'Fjärrskärm ansluten. Ta bort den ur bild, avläsningen startar om fem sekunder.'
+          detectorWasRunning
+            ? 'Fjärrskärm ansluten. Gå ur bild och tryck Tavlan är tom.'
             : 'Fjärrskärm ansluten.',
         );
       }
-      if (!isCalibrated) return;
-      setPairingHold(true);
-      window.setTimeout(() => setPairingHold(false), PAIRING_RESUME_MS);
-      // Detektorn tappar allt den visste när den pausas och tar tavlan som
-      // den ser ut vid omstarten som "tom". Kan pilar sitta kvar: samma fråga
-      // som efter en omkalibrering mitt i en tur.
-      if (state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval)) {
-        setConfirmEmpty(true);
-      }
+      if (detectorWasRunning) setConfirmEmpty(true);
     },
-    [isCalibrated, state, awaitingRetrieval],
+    [isCalibrated, showSetup, showResume],
   );
 
   useDartDetector(
@@ -767,8 +764,8 @@ export default function App() {
     // ligger över: pilar som registreras då hamnar i fel match, eller i en
     // match användaren just höll på att byta ut.
     // Inte heller under parkopplingen av en fjärrskärm (den hålls upp framför
-    // kameran) eller strax efter, se PAIRING_RESUME_MS.
-    isCalibrated && !showSetup && !showResume && !confirmEmpty && !showPairing && !pairingHold,
+    // kameran); efteråt väntar den på "Tavlan är tom", se closePairing.
+    isCalibrated && !showSetup && !showResume && !confirmEmpty && !showPairing,
     motionThreshold,
     debugCanvasRef,
     handleDartDetected,

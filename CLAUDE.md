@@ -660,12 +660,16 @@ kameran har alltid det, så räkna med en kandidat per nätgränssnitt där.
 Mät på telefonen och surfplattan; blir koden svårläst (> v18) är nästa steg
 en egen binär packning av fingeravtryck och kandidater.
 
-- **Avläsningen pausas under parkopplingen** och fem sekunder efter
-  (`PAIRING_RESUME_MS` i `App.tsx`): en surfplatta framför tavlan är annars
-  ett "främmande föremål" som efter 8 s tas upp i referensbilden. Pausen
-  nollställer detektorn (den tar tavlan som "tom" vid omstarten), så mitt i
-  en tur med pilar i tavlan kommer samma "Dra ut alla pilar"-fråga som efter
-  en omkalibrering. Parkoppla därför helst FÖRE kalibreringen.
+- **Avläsningen pausas under parkopplingen** och startar efteråt först på
+  "Tavlan är tom" (`closePairing` i `App.tsx`, besvaras på telefonen eller
+  fjärrskärmen): en surfplatta framför tavlan är annars ett "främmande
+  föremål" som efter 8 s tas upp i referensbilden. **Varje omstart av
+  detektorn tar bilden som den är som tom tavla** (`emptyBaseline`), och
+  den referensen avgör om tavlan tömts - alltså spelarbytet. Den läker inte
+  av sig själv när pilar registrerats. Fram till 2026-10-10 startade
+  detektorn om efter fasta 5 s, och stod surfplattan eller personen kvar i
+  bild bytte turerna aldrig av sig själva. Parkoppla helst FÖRE
+  kalibreringen.
 - **En fjärrskärm som försvinner påverkar ingenting** på kameran: den glöms
   bara. Laddas kameran om dör alla kanaler; fjärrskärmen visar senast kända
   läge och måste parkopplas om (utan server går ICE inte att förhandla om).
