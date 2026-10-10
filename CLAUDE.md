@@ -111,6 +111,8 @@ src/
       CodeTools.tsx           Kopiera/dela/klistra in koden - reservvägen utan kamera
       RemoteScoreboard.tsx    Fjärrskärmens resultattavla (läsbar från 2,4 m, porträtt/landskap)
       RemoteStatusBar.tsx     Ansluten / ingen kontakt / frånkopplad – visar senast kända läge
+      RemoteCalibration.tsx   Kalibrering från fjärrskärmen: kamerabild + wireframe, Auto/Spara/Avbryt; "Tavlan är tom"
+      FullscreenToggle.tsx    Helskärmsknapp (Fullscreen API), dold där den inte behövs
 
   hooks/
     useOpenCV.ts              Laddar opencv.js via modulnivå-promise
@@ -135,6 +137,8 @@ src/
     webRtcTransport.ts        Transport över RTCDataChannel: inga iceServers, ingen trickle
     sdp.ts                    Parkopplingskoden: minifierad SDP, deflate-raw, base64url
     qrScan.ts                 QR-läsning: BarcodeDetector, annars jsQR (lat)
+    calPreview.ts             Kamerabild med tavlans wireframe som JPEG, för kalibrering på fjärrskärmen
+    view.ts                   lastTurnDarts: spelarlistans pilar
 
   utils/
     dartMath.ts               ★ Mått, koordinatsystem, poängberäkning
@@ -162,7 +166,7 @@ scripts/check-cal.ts          Rotation och sektorlägen för en sparad kalibreri
 scripts/boundary-analysis.ts  Hur många kast osäkerhetsflaggan markerar och hur många rättningar den fångar, ur en localStorage-dump
 scripts/crop-analysis.mjs     Beskär en sparad analys (grab.mjs analys-N/) till tom | topp | nu | skillnad kring en punkt
 tools/                        Felsökning mot telefonen över USB (adb + CDP) - se TESTPLAN.md. history.mjs läser konsolbufferten i efterhand, corrections.mjs hämtar rättningsloggen
-public/                       Ikoner, manifest. opencv.js hamnar här (gitignorerad)
+public/                       Ikoner, manifest (manifest-remote.webmanifest för ?remote). opencv.js hamnar här (gitignorerad)
 .github/workflows/deploy.yml  Typkontroll + tester (publiceringen sköts av Netlify)
 netlify.toml                  Netlify-bygget: tester, npm run build, dist/, cachehuvuden
 AGENT.md                      Arkitektur + lista över kända begränsningar
@@ -180,7 +184,7 @@ tavlans mått. Ändras något där ska testerna säga till.
 ```bash
 npm install
 npm run dev      # Vite dev-server, http://localhost:5173
-npm test         # 372 tester
+npm test         # 383 tester
 npm run lint     # tsc --noEmit, strict
 npm run build    # tsc --noEmit && vite build → dist/
 ```
@@ -478,7 +482,7 @@ sep 2026) och justerat om raderna nedan som gäller `useDartDetector`. Se
 | Sektorrotation: provpunkter | 720 vinklar × 6 radier (164/166/168 och 101/103/105 mm) | `sectorPhase.ts` | **Satt av oss.** Mitt i dubbel- respektive trippelringen med marginal till trådarna. Prover som hamnar på tråd eller i en nött fläck blir "varken-eller" och faller ur rösträkningen. |
 
 Verifierat exakt offline: `BOARD_MM`, koordinatkonverteringarna, homografilösaren,
-ellipsgeometrin, spetsdetekteringen, regelmotorn och fjärrskärmens synk — 372 tester, delvis mot den syntetiska
+ellipsgeometrin, spetsdetekteringen, regelmotorn och fjärrskärmens synk — 383 tester, delvis mot den syntetiska
 tavlan. Verifierat på riktig hårdvara (sep 2026): hela kedjan (kamera → warp →
 absdiff → kontur → spets → poäng) upptäcker och läser av pilar korrekt i
 normalzonen, med den återstående bull-precisionsfrågan ovan.
@@ -696,9 +700,26 @@ en egen binär packning av fingeravtryck och kandidater.
 - **Wake Lock** (`useWakeLock`) håller fjärrskärmen tänd; webbläsaren släpper
   låset när fliken döljs, så det begärs om vid `visibilitychange` och vid
   första tryck.
-- Fjärrskärmen kan inte starta en ny match eller leg - det är inte en
-  operation useMatch har som förslag, och en ny match ska startas där
-  kameran står (spelarna, kalibreringen). "Nästa spelare" är `endTurn`.
+- **Kommandon, inte bara matchändringar** (tillägg 2026-10-10, se
+  `PLAN_FJARRSKARM.md`): `startMatch`, `calibrate {open|auto|save|cancel}`
+  och `confirmEmpty`. RemoteHost tillämpar dem inte själv utan lämnar dem
+  till App (`onCommand`), som kör telefonens EGNA hanterare - useMatch.start,
+  kalibreringsvyns Auto/Spara via `CalibrationOverlay.remoteCommand`,
+  "Tavlan är tom". Ingen ny kalibreringslogik. Kameran skickar `hostState`
+  (kalibrerar, steg, statusrad, "tavlan tom"-frågan) och under kalibrering
+  `calPreview`: hela kamerabilden med samma ringar och streckade
+  sektorlinjer som telefonen ritar, JPEG ≤ 720 px, var 3:e s och strax
+  efter varje ändring - bara när en fjärrskärm lyssnar.
+- **Varje omstart av detektorn tar bilden som tom tavla**, även de som
+  fjärrskärmen orsakar: Spara kalibrering och ny match startar den direkt.
+  Den som trycker står normalt vid linjen, men står någon i bild då byter
+  turerna inte av sig själva förrän nästa omstart. Mitt i en tur med pilar
+  kvar kommer "Dra ut alla pilar"-frågan, som fjärrskärmen kan svara på.
+- "Nästa spelare" på fjärrskärmen är `endTurn` och sätter samma
+  "tömningen hör till förra turen"-flagga som telefonens "Avsluta tur"
+  (`manualEndRef`). Trycks den när tavlan redan är tom, och nästa spelares
+  pilar sedan inte läses alls, äts den spelarens tömning upp - känt
+  gränsfall, inte åtgärdat (flaggan nollas av nästa avlästa pil).
 
 ---
 

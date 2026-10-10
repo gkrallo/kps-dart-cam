@@ -110,3 +110,48 @@ wifi (telefonen + surfplatta eller dator). Fas 4 behöver tavlan.
 
 Grovt 3-5 arbetspass. Fas 0-1 kan göras en kväll när tavlan inte är
 tillgänglig.
+
+## Tillägg efter första enhetstestet 2026-10-09
+
+Kameran (Galaxy S25) och fjärrskärmen (Samsung-surfplatta) i Chrome på
+samma wifi. Parkopplingen fungerade efter att fjärrsidan fick be om
+kameran (07d3763, riktiga adresser i stället för *.local). Kristians
+synpunkter, byggda 2026-10-10:
+
+1. **Starta en match från fjärrskärmen.** Nytt kommando `startMatch` med
+   det GameSetup ger. Kameran kör samma `useMatch.start` som sin egen
+   GameSetup och "Spela igen, samma spelare", stänger sina egna
+   inställnings- och fortsätt-kort, och detektorn är av så länge de
+   visas, som förut. På fjärrskärmen: inställningarna (GameSetup,
+   förifylld med förra matchens spelare) när ingen match pågår eller den
+   är avgjord, "Spela igen" efter en avgjord match och "Ny match" med
+   bekräftelse under en match.
+2. **Kalibrering från fjärrskärmen** - viktigast, fästet gungar när man rör
+   telefonen. Kommandon `calibrate {open | auto | save | cancel}` och
+   `confirmEmpty`, utförda med kalibreringsvyns egna hanterare (ingen
+   ändring av kalibreringsmatematik, Auto eller detektor). Kameran
+   rapporterar sitt läge (`hostState`: kalibrerar, steg, statusrad, "Dra
+   ut alla pilar"-frågan) och skickar under kalibreringen en
+   **förhandsbild** (`calPreview`): kamerans bild med tavlans wireframe,
+   så att man på surfplattan ser att de streckade linjerna ligger på
+   trådarna. Fjärrskärmen har en Kalibrering-vy med bilden, statusraden
+   och Kalibrera om / Auto / Spara / Avbryt, och svarar "Tavlan är tom".
+3. **Spelarlistan visar senaste turens pilar**, t.ex. "Spelare 1
+   (T20 · T20 · Miss) 356" - samma etiketter som pilraden. Den som står
+   på tur visar den pågående turen. Farfar: rundans pilar, och de
+   Farfar-specifika siffrorna står kvar.
+4. Dessa krav här och i TESTPLAN Del H.
+5. **Helskärmsknapp** på fjärrskärmen (Fullscreen API, dold där den saknas
+   eller inte behövs), och ett eget manifest för `?remote` så att en
+   fjärrskärm som installeras på hemskärmen öppnar fjärrskärmen - i
+   helskärm och valfri riktning - och inte kameraappen.
+
+**Utredning: turerna bytte inte av sig själva vid testet.** "Nästa
+spelare" från fjärrskärmen fungerade. En mekanism på grenen som stämmer:
+efter en parkoppling med kalibrerad kamera startade detektorn om efter
+fasta 5 s, och varje omstart tar bilden som den är som "tom tavla". Stod
+surfplattan eller personen kvar i bild blev referensen fel och tömningen
+kändes aldrig igen. Åtgärdat: detektorn väntar nu på "Tavlan är tom"
+(besvarbar från fjärrskärmen). Inte bevisat att det var orsaken - det
+beror på om parkopplingen gjordes efter kalibreringen. Kör om TESTPLAN
+H6 och H19.

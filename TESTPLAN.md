@@ -370,6 +370,41 @@ en gång med nät (så att service workern cachar den).
     båda visar samma sak, båda kan rätta, "fjärr ansluten (2)".
 18. **Laptop utan kamera** via **Klistra in kod** åt båda håll.
 
+**Tillägg 2026-10-10** (se `PLAN_FJARRSKARM.md`). Rör inte telefonen alls
+från och med parkopplingen - det är hela poängen.
+
+19. **Turbytet efter parkoppling (utredningen).** Parkoppla EFTER
+    kalibreringen, mitt i en match. Telefonen säger "Gå ur bild och tryck
+    Tavlan är tom"; surfplattan visar samma fråga. Gå ur bild, svara på
+    surfplattan, kasta en hel tur och dra ut pilarna: turen ska byta av sig
+    själv. Gör om två turer till.
+20. **Kalibrering från surfplattan.** Starta appen på telefonen och parkoppla
+    direkt (före kalibreringen). Surfplattan ska visa **Kalibrering** av sig
+    själv, med kamerans bild inom några sekunder. Tryck **Auto**: i siktet
+    zoomar kameran in, hittar tavlan och kör Auto. Bilden ska visa ringarna
+    och de streckade sektorlinjerna; döm efter linjerna mot trådarna. Notera
+    om bilden är skarp nog att döma efter, och hur lång tid den tar.
+21. **Spara från surfplattan.** **Spara** ska vara gråad i siktet och medan
+    Auto arbetar. Efter Spara stängs kalibreringsvyn på surfplattan och
+    telefonen går vidare.
+22. **Kalibrera om / Avbryt.** Mitt i en match: **Kalibrering** → **Kalibrera
+    om** (avläsningen står still) → **Avbryt**. Kalibreringen ska vara exakt
+    som förut (kasta en pil i ett känt fält). Gör om med en pil i tavlan och
+    **Spara**: "Dra ut alla pilar" ska komma och gå att svara på från
+    surfplattan.
+23. **Starta en match från surfplattan.** Utan pågående match: **Starta en
+    match**, välj läge och spelare, **Starta spel**. Telefonens
+    inställningskort ska stängas av sig själv och den nya matchen läsas upp.
+    Spela klart (eller ändra till en snabb 301) och prova **Spela igen, samma
+    spelare** och **Ny match** (med bekräftelse) under en pågående match.
+24. **Spelarlistan.** Efter en tur per spelare ska listan visa t.ex.
+    "Spelare 1 (T20 · T20 · Miss) 356"; den som står på tur visar bara sina
+    pilar från den pågående turen. I Farfar: rundans pilar och sparade pilar.
+25. **Helskärm.** Knappen uppe till höger på surfplattan: in och ut ur
+    helskärm. Installera fjärrskärmen på hemskärmen (Chrome-menyn → Lägg till
+    på startskärmen) från `?remote`: ikonen ska öppna fjärrskärmen i helskärm
+    och gå att vrida, inte kameraappen.
+
 ---
 
 ## Om något går fel
