@@ -85,5 +85,5 @@ export function useRemoteHost(match: Match | null, state: MatchState | null, han
     };
   }, [host]);
 
-  return { clients, startPairing };
+  return { clients, startPairing, host };
 }

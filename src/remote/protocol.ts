@@ -47,17 +47,43 @@ export type MatchOp =
   | { kind: 'endTurn' };
 
 /**
- * Kommandon till kameraappen själv, inte till matchen: ny match (och senare
- * kalibrering). De rör sånt som bor i App - uppstartsflödet, detektorn - så
- * RemoteHost lämnar dem vidare via `onCommand` i stället för att tillämpa
- * dem själv. Tillagda efter första enhetstestet 2026-10-09: varje tryck på
- * telefonen i stativet riskerar att rubba bilden.
+ * Kommandon till kameraappen själv, inte till matchen: ny match,
+ * kalibrering, "tavlan är tom". De rör sånt som bor i App - uppstartsflödet,
+ * kalibreringsvyn, detektorn - så RemoteHost lämnar dem vidare via
+ * `onCommand` i stället för att tillämpa dem själv. Tillagda efter första
+ * enhetstestet 2026-10-09: varje tryck på telefonen i stativet riskerar att
+ * rubba bilden.
  */
-export type HostCommand = { kind: 'startMatch'; config: StartMatchConfig };
+export type HostCommand =
+  | { kind: 'startMatch'; config: StartMatchConfig }
+  | { kind: 'calibrate'; action: CalibrateAction }
+  | { kind: 'confirmEmpty' };
 
 export type RemoteOp = MatchOp | HostCommand;
 
-export const isHostCommand = (op: RemoteOp): op is HostCommand => op.kind === 'startMatch';
+export const isHostCommand = (op: RemoteOp): op is HostCommand =>
+  op.kind === 'startMatch' || op.kind === 'calibrate' || op.kind === 'confirmEmpty';
+
+const CAL_ACTIONS: readonly CalibrateAction[] = ['open', 'auto', 'save', 'cancel'];
+
+/**
+ * Kamerans läge utanför matchen: kalibrering och "dra ut alla pilar"-frågan.
+ * Skickas när det ändras och vid varje hello.
+ */
+export interface HostState {
+  /** Kalibreringsvyn är öppen (ingen giltig kalibrering just nu). */
+  calibrating: boolean;
+  /** 'sikte' = hårkors och zoom, 'punkter' = wireframe att spara. */
+  calStep: 'sikte' | 'punkter' | null;
+  /** Det som står i kalibreringsvyns statusrad. */
+  calStatus: string | null;
+  /** Auto eller zoom arbetar. */
+  calBusy: boolean;
+  /** Kameran frågar "Dra ut alla pilar" och väntar på "Tavlan är tom". */
+  confirmEmpty: boolean;
+  /** Det finns en sparad kalibrering att gå tillbaka till (Avbryt). */
+  canCancel: boolean;
+}
 
 const MODES: readonly GameMode[] = ['301', '501', 'FARFAR'];
 /** Samma tak som GameSetup. */
@@ -136,6 +162,25 @@ export interface FrameMessage extends Envelope {
   tipPx: { x: number; y: number };
 }
 
+/** host → remote: kameraläget utanför matchen. */
+export interface HostStateMessage extends Envelope, HostState {
+  type: 'hostState';
+}
+
+/**
+ * host → remote: kamerabilden med tavlans wireframe inritad, så att den som
+ * kalibrerar på fjärrskärmen kan se att de streckade linjerna ligger på
+ * trådarna - utan att gå fram till telefonen.
+ */
+export interface CalPreviewMessage extends Envelope {
+  type: 'calPreview';
+  jpegBase64: string;
+  /** ms sedan epoch. */
+  at: number;
+  /** Är wireframen inritad (falskt i siktet, där punkterna inte är tavlan än). */
+  wireframe: boolean;
+}
+
 export type WireMessage =
   | HelloMessage
   | SnapshotMessage
@@ -143,7 +188,9 @@ export type WireMessage =
   | RejectMessage
   | PingMessage
   | PongMessage
-  | FrameMessage;
+  | FrameMessage
+  | HostStateMessage
+  | CalPreviewMessage;
 
 /* --- validering ---------------------------------------------------------- */
 
@@ -180,6 +227,10 @@ function isValidOp(op: unknown): op is RemoteOp {
       return true;
     case 'startMatch':
       return isValidStartConfig(op.config);
+    case 'calibrate':
+      return CAL_ACTIONS.includes(op.action as CalibrateAction);
+    case 'confirmEmpty':
+      return true;
     default:
       return false;
   }
@@ -237,6 +288,19 @@ export function parseWireMessage(raw: unknown): WireMessage | null {
         isObj(m.crop) &&
         isObj(m.tipPx)
         ? (m as unknown as FrameMessage)
+        : null;
+    case 'hostState':
+      return typeof m.calibrating === 'boolean' &&
+        (m.calStep === null || m.calStep === 'sikte' || m.calStep === 'punkter') &&
+        (m.calStatus === null || isStr(m.calStatus)) &&
+        typeof m.calBusy === 'boolean' &&
+        typeof m.confirmEmpty === 'boolean' &&
+        typeof m.canCancel === 'boolean'
+        ? (m as unknown as HostStateMessage)
+        : null;
+    case 'calPreview':
+      return isStr(m.jpegBase64) && isNum(m.at) && typeof m.wireframe === 'boolean'
+        ? (m as unknown as CalPreviewMessage)
         : null;
     default:
       return null;

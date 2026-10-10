@@ -3,6 +3,7 @@ import type { Match, MatchState } from '../game/types';
 import {
   PROTOCOL_VERSION,
   randomId,
+  type HostState,
   type RemoteOp,
   type SerializedMatch,
   type SnapshotMessage,
@@ -86,6 +87,10 @@ export class RemoteReplica {
   private readonly now: () => number;
   /** Senaste meddelandet från host (ms), för frånkopplad-status. */
   lastHeardAt: number | null = null;
+  /** Kamerans läge utanför matchen. Sparas inte: det gäller bara medan kanalen lever. */
+  hostState: HostState | null = null;
+  /** Senaste kalibreringsbilden från kameran. */
+  preview: { jpegBase64: string; at: number; wireframe: boolean } | null = null;
 
   constructor(opts: RemoteReplicaOptions = {}) {
     this.storage = opts.storage === undefined ? defaultStorage() : opts.storage;
@@ -240,6 +245,17 @@ export class RemoteReplica {
       }
       case 'ping':
         this.transport?.send({ v: PROTOCOL_VERSION, type: 'pong', matchId: msg.matchId, t: msg.t });
+        return;
+      case 'hostState': {
+        const { calibrating, calStep, calStatus, calBusy, confirmEmpty, canCancel } = msg;
+        this.hostState = { calibrating, calStep, calStatus, calBusy, confirmEmpty, canCancel };
+        if (!calibrating) this.preview = null;
+        this.emit();
+        return;
+      }
+      case 'calPreview':
+        this.preview = { jpegBase64: msg.jpegBase64, at: msg.at, wireframe: msg.wireframe };
+        this.emit();
         return;
       default:
         return;

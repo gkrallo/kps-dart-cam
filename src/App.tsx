@@ -29,6 +29,8 @@ import { useRemoteHost } from './hooks/useRemoteHost';
 import { HostPairing } from './components/remote/HostPairing';
 import type { AppliedOp } from './remote/host';
 import type { HostCommand } from './remote/protocol';
+import { renderCalibrationPreview } from './remote/calPreview';
+import { loadCalibration } from './utils/calibration';
 
 /**
  * Hur länge avläsningen står kvar i paus efter en parkoppling. Fjärrskärmen
@@ -608,45 +610,128 @@ export default function App() {
     [match, commitRemoteChange],
   );
 
+  /** Kalibreringsvyns läge (från CalibrationOverlay), för fjärrskärmen. */
+  const [calView, setCalView] = useState<{ step: 'sikte' | 'punkter'; status: string | null; busy: boolean } | null>(
+    null,
+  );
+  /** Knapptryck från fjärrskärmen till kalibreringsvyn; `n` ökas per tryck. */
+  const [calRemoteCmd, setCalRemoteCmd] = useState<{ action: 'auto' | 'save' | 'cancel'; n: number } | null>(null);
+  const pressCal = (action: 'auto' | 'save' | 'cancel') =>
+    setCalRemoteCmd((c) => ({ action, n: (c?.n ?? 0) + 1 }));
+
   /**
-   * Kommandon från fjärrskärmen som inte är matchändringar. Ny match går
-   * samma väg som GameSetup och "Spela igen" på telefonen: useMatch.start.
-   * Returnerar null när det är utfört, annars skälet som visas där.
+   * Kommandon från fjärrskärmen som inte är matchändringar. Varje gren gör
+   * exakt det motsvarande knapp på telefonen gör - ny match samma väg som
+   * GameSetup och "Spela igen", kalibreringen via kalibreringsvyns egna
+   * hanterare. Returnerar null när det är utfört, annars skälet som visas
+   * på fjärrskärmen.
+   *
+   * Ingen useCallback: useRemoteHost läser den ur en ref varje rendering, och
+   * den behöver se den aktuella kalibreringshanteraren (som byts varje
+   * rendering).
    */
-  const handleRemoteCommand = useCallback(
-    (cmd: HostCommand): string | null => {
-      if (cmd.kind === 'startMatch') {
-        // Kan pilar sitta kvar i tavlan fortsätter detektorn annars med dem
-        // som "registrerade", och tömningen avslutar den nya matchens
-        // första tur. Samma fråga som efter en omkalibrering mitt i en tur.
-        const dartsMayRemain =
-          isCalibrated && !!state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval);
-        const c = cmd.config;
-        start({
-          mode: c.mode,
-          doubleOut: c.mode !== 'FARFAR' && c.doubleOut,
-          farfarCap: c.mode === 'FARFAR' && c.farfarCap,
-          players: c.players.map((p) => ({ name: p.name.trim() })),
-        });
-        // Uppstartsfrågan ("Fortsätt matchen?") är besvarad: matchen startades
-        // nyss. Annars dyker den upp efter kalibreringen om den tagit mer än
-        // AUTO_RESUME_MS, och då måste någon gå fram till telefonen.
-        startupDecided.current = true;
-        setShowSetup(false);
-        setShowResume(false);
-        if (dartsMayRemain) setConfirmEmpty(true);
-        audioEngine.speak(`Ny match, ${GAME_MODE_LABEL[c.mode]}. ${c.players[0].name.trim()} börjar.`);
+  const handleRemoteCommand = (cmd: HostCommand): string | null => {
+    if (cmd.kind === 'calibrate') {
+      if (!isLoaded) return 'Datorseendet laddas fortfarande';
+      if (cmd.action === 'open') {
+        // Som "Kalibrera om". Står vyn redan öppen finns inget att göra.
+        if (isCalibrated) handleCalibrationClick();
+        setCalRemoteCmd(null);
         return null;
       }
-      return 'Det gick inte just nu';
-    },
-    [isCalibrated, state, awaitingRetrieval, start],
-  );
+      if (isCalibrated) return 'Tryck Kalibrera om först';
+      if (calView?.busy) return 'Vänta, kalibreringen arbetar';
+      if (cmd.action === 'save' && calView?.step !== 'punkter') return 'Tryck Auto först';
+      if (cmd.action === 'cancel' && !loadCalibration()) return 'Ingen sparad kalibrering att gå tillbaka till';
+      pressCal(cmd.action);
+      return null;
+    }
+    if (cmd.kind === 'confirmEmpty') {
+      if (!confirmEmpty) return 'Kameran frågar inte om det just nu';
+      answerConfirmEmpty();
+      return null;
+    }
+    if (cmd.kind === 'startMatch') {
+      // Kan pilar sitta kvar i tavlan fortsätter detektorn annars med dem
+      // som "registrerade", och tömningen avslutar den nya matchens
+      // första tur. Samma fråga som efter en omkalibrering mitt i en tur.
+      const dartsMayRemain =
+        isCalibrated && !!state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval);
+      const c = cmd.config;
+      start({
+        mode: c.mode,
+        doubleOut: c.mode !== 'FARFAR' && c.doubleOut,
+        farfarCap: c.mode === 'FARFAR' && c.farfarCap,
+        players: c.players.map((p) => ({ name: p.name.trim() })),
+      });
+      // Uppstartsfrågan ("Fortsätt matchen?") är besvarad: matchen startades
+      // nyss. Annars dyker den upp efter kalibreringen om den tagit mer än
+      // AUTO_RESUME_MS, och då måste någon gå fram till telefonen.
+      startupDecided.current = true;
+      setShowSetup(false);
+      setShowResume(false);
+      if (dartsMayRemain) setConfirmEmpty(true);
+      audioEngine.speak(`Ny match, ${GAME_MODE_LABEL[c.mode]}. ${c.players[0].name.trim()} börjar.`);
+      return null;
+    }
+    return 'Det gick inte just nu';
+  };
 
-  const { clients: remoteClients, startPairing } = useRemoteHost(match, state, {
+  /** "Tavlan är tom" - från knappen på telefonen eller från fjärrskärmen. */
+  const answerConfirmEmpty = () => {
+    setConfirmEmpty(false);
+    // Var turen redan färdigkastad drogs pilarna ut medan
+    // detektorn stod still - den tömningen måste ändå avsluta turen.
+    const full = !!state && state.currentDarts.length >= state.view.available;
+    if (awaitingRetrieval || full) handleBoardCleared();
+  };
+
+  const { clients: remoteClients, startPairing, host: remoteHost } = useRemoteHost(match, state, {
     onApplied: handleRemoteApplied,
     onCommand: handleRemoteCommand,
   });
+  // Kameraläget utanför matchen till fjärrskärmarna: kalibreringsvyn och
+  // "Dra ut alla pilar"-frågan. Utan kontrollen här måste någon gå fram till
+  // telefonen och läsa skärmen - just det fjärrskärmen ska slippa.
+  const calibrating = isLoaded && !isCalibrated;
+  useEffect(() => {
+    remoteHost.setHostState({
+      calibrating,
+      calStep: calibrating ? (calView?.step ?? null) : null,
+      calStatus: calibrating ? (calView?.status ?? null) : null,
+      calBusy: calibrating && !!calView?.busy,
+      confirmEmpty: confirmEmpty && isCalibrated,
+      canCancel: calibrating && loadCalibration() !== null,
+    });
+  }, [remoteHost, calibrating, calView, confirmEmpty, isCalibrated]);
+
+  // Förhandsbilden: bara medan kalibreringsvyn är öppen och någon fjärrskärm
+  // lyssnar. Ny bild strax efter varje ändring av punkterna eller vyns läge
+  // (Auto klar, zoom klar), och var 3:e s som en enkel livebild medan
+  // stativet riktas.
+  const sendCalPreview = useRef<() => void>(() => {});
+  sendCalPreview.current = () => {
+    if (!videoElement) return;
+    const container = {
+      width: containerSize.width || window.innerWidth,
+      height: containerSize.height || window.innerHeight,
+    };
+    const wireframe = calView?.step === 'punkter' && calibrationPoints.length === 4;
+    const jpeg = renderCalibrationPreview(videoElement, wireframe ? calibrationPoints : null, container);
+    if (jpeg) remoteHost.sendPreview(jpeg, wireframe);
+  };
+  const previewWanted = calibrating && remoteClients.length > 0 && !!videoElement;
+  useEffect(() => {
+    if (!previewWanted || calView?.busy) return;
+    const t = window.setTimeout(() => sendCalPreview.current(), 400);
+    return () => window.clearTimeout(t);
+  }, [previewWanted, calibrationPoints, calView]);
+  useEffect(() => {
+    if (!previewWanted) return;
+    const t = window.setInterval(() => sendCalPreview.current(), 3000);
+    return () => window.clearInterval(t);
+  }, [previewWanted]);
+
   const [showPairing, setShowPairing] = useState(false);
   /** Paus efter parkopplingen, se PAIRING_RESUME_MS. */
   const [pairingHold, setPairingHold] = useState(false);
@@ -917,6 +1002,8 @@ export default function App() {
                 zoomLevel={zoomLevel}
                 onZoomChange={setZoomLevel}
                 zoomCapability={zoomCapability}
+                remoteCommand={calRemoteCmd}
+                onRemoteState={setCalView}
               />
             )}
           </CameraFeed>
@@ -985,13 +1072,7 @@ export default function App() {
               aldrig. De som redan lästs av ligger kvar i turen.
             </div>
             <button
-              onClick={() => {
-                setConfirmEmpty(false);
-                // Var turen redan färdigkastad drogs pilarna ut medan
-                // detektorn stod still - den tömningen måste ändå avsluta turen.
-                const full = !!state && state.currentDarts.length >= state.view.available;
-                if (awaitingRetrieval || full) handleBoardCleared();
-              }}
+              onClick={answerConfirmEmpty}
               className="bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-black py-3 rounded-xl"
             >
               Tavlan är tom

@@ -566,4 +566,50 @@ describe('synk: host och fjärrskärm', () => {
       await failure(c.rep.propose({ kind: 'startMatch', config: { mode: '501', doubleOut: false, farfarCap: false, players: [{ name: 'A' }] } })),
     ).toBe(REASON_NOT_ACCEPTED);
   });
+  it('kalibreringsläget och förhandsbilden når fjärrskärmen, även en som ansluter sent', async () => {
+    const host = new RemoteHost(mk(), {
+      onCommand: (cmd) => (cmd.kind === 'calibrate' && cmd.action === 'save' ? 'Tryck Auto först' : null),
+    });
+    const calState = { calibrating: true, calStep: 'sikte' as const, calStatus: null, calBusy: false, confirmEmpty: false, canCancel: true };
+    host.setHostState(calState);
+    host.sendPreview('AAAA', false, 123);
+
+    const pair = createLoopbackPair();
+    host.attach(pair.host);
+    const rep = new RemoteReplica({ storage: memStorage() });
+    rep.attach(pair.remote);
+    await settle(pair);
+    expect(rep.hostState).toEqual(calState);
+    expect(rep.preview).toEqual({ jpegBase64: 'AAAA', at: 123, wireframe: false });
+
+    await rep.propose({ kind: 'calibrate', action: 'auto' });
+    expect(await failure(rep.propose({ kind: 'calibrate', action: 'save' }))).toBe('Tryck Auto först');
+
+    host.setHostState({ ...calState, calStep: 'punkter', calStatus: 'Tavlan hittad.' });
+    host.sendPreview('BBBB', true, 456);
+    await settle(pair);
+    expect(rep.hostState?.calStatus).toBe('Tavlan hittad.');
+    expect(rep.preview?.wireframe).toBe(true);
+
+    // Sparad: kalibreringen stängs, den gamla bilden hör inte till nästa gång.
+    host.setHostState({ ...calState, calibrating: false, calStep: null, confirmEmpty: true });
+    await settle(pair);
+    expect(rep.hostState?.confirmEmpty).toBe(true);
+    expect(rep.preview).toBeNull();
+  });
+
+  it('oförändrat kameraläge skickas inte om', async () => {
+    const host = new RemoteHost(mk());
+    const pair = createLoopbackPair();
+    host.attach(pair.host);
+    new RemoteReplica({ storage: memStorage() }).attach(pair.remote);
+    await settle(pair);
+    let n = 0;
+    pair.remote.onMessage((m) => m.type === 'hostState' && n++);
+    const st = { calibrating: false, calStep: null, calStatus: null, calBusy: false, confirmEmpty: false, canCancel: false };
+    host.setHostState(st);
+    host.setHostState({ ...st });
+    await settle(pair);
+    expect(n).toBe(1);
+  });
 });

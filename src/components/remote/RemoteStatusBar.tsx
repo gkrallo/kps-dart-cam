@@ -1,4 +1,4 @@
-import { Wifi, WifiOff } from 'lucide-react';
+import { Wifi, WifiOff, Crosshair } from 'lucide-react';
 
 export type RemoteStatus =
   | { kind: 'connected' }
@@ -14,11 +14,30 @@ const clock = (ms: number | null) =>
  * stoppar något - resultattavlan står kvar - men rättning är låst, och det
  * ska gå att se varför.
  */
-export function RemoteStatusBar({ status, onReconnect }: { status: RemoteStatus; onReconnect: () => void }) {
+export function RemoteStatusBar({
+  status,
+  onReconnect,
+  onCalibration,
+}: {
+  status: RemoteStatus;
+  onReconnect: () => void;
+  /** Öppna kalibreringsvyn. Bara när kameran hörs - annars finns inget att styra. */
+  onCalibration?: () => void;
+}) {
   if (status.kind === 'connected') {
     return (
-      <div className="flex items-center gap-1.5 px-4 pt-3 text-xs font-bold text-emerald-400">
-        <Wifi className="w-3.5 h-3.5" /> Ansluten till kameran
+      <div className="flex items-center justify-between gap-2 px-4 pt-3">
+        <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+          <Wifi className="w-3.5 h-3.5" /> Ansluten till kameran
+        </span>
+        {onCalibration && (
+          <button
+            onClick={onCalibration}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+          >
+            <Crosshair className="w-3.5 h-3.5 text-amber-400" /> Kalibrering
+          </button>
+        )}
       </div>
     );
   }

@@ -5,6 +5,7 @@ import { RemoteStatusBar, type RemoteStatus } from './components/remote/RemoteSt
 import { ThrowEditor } from './components/ThrowEditor';
 import { TurnHistory } from './components/TurnHistory';
 import { GameSetup } from './components/GameSetup';
+import { RemoteCalibration, RemoteConfirmEmpty } from './components/remote/RemoteCalibration';
 import { useRemoteReplica } from './hooks/useRemoteReplica';
 import { useWakeLock } from './hooks/useWakeLock';
 import { label as segLabel } from './game/segments';
@@ -63,6 +64,7 @@ export default function RemoteApp() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [showCal, setShowCal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [, setTick] = useState(0);
   /** Versionen när en pil i Turer valdes, se onEditorOpen. */
@@ -86,6 +88,14 @@ export default function RemoteApp() {
       ? { kind: 'connected' }
       : { kind: 'silent', since: replica.lastHeardAt };
   const locked = status.kind !== 'connected';
+  const hostState = replica.connected ? replica.hostState : null;
+
+  // Öppnas kalibreringen på kameran (härifrån eller på telefonen) visas den
+  // här också, och den stängs när kalibreringen sparats.
+  const calibrating = !!hostState?.calibrating;
+  useEffect(() => {
+    setShowCal(calibrating);
+  }, [calibrating]);
 
   // Tappas kontakten mitt i en rättning stängs den - ett förslag kan ändå
   // inte skickas, och knappsatsen ska inte se ut att fungera.
@@ -133,7 +143,7 @@ export default function RemoteApp() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-slate-950 text-slate-50 font-sans overflow-hidden">
-      <RemoteStatusBar status={status} onReconnect={() => setPairing(true)} />
+      <RemoteStatusBar status={status} onReconnect={() => setPairing(true)} onCalibration={() => setShowCal(true)} />
 
       {state ? (
         <RemoteScoreboard
@@ -213,6 +223,20 @@ export default function RemoteApp() {
             </div>
           </div>
         </div>
+      )}
+
+      {showCal && (
+        <RemoteCalibration
+          hostState={hostState}
+          preview={replica.preview}
+          locked={locked}
+          onAction={(action) => void send({ kind: 'calibrate', action })}
+          onClose={() => setShowCal(false)}
+        />
+      )}
+
+      {hostState?.confirmEmpty && (
+        <RemoteConfirmEmpty locked={locked} onConfirm={() => void send({ kind: 'confirmEmpty' })} />
       )}
 
       {toast && (

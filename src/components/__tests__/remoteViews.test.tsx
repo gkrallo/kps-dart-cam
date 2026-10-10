@@ -8,6 +8,7 @@ import { QrCode } from '../remote/QrCode';
 import { CodePaste, CodeShare } from '../remote/CodeTools';
 import { TurnHistory } from '../TurnHistory';
 import { GameSetup } from '../GameSetup';
+import { RemoteCalibration, RemoteConfirmEmpty } from '../remote/RemoteCalibration';
 import { createMatch, endTurn, matchState, throwDart } from '../../game/match';
 
 /**
@@ -108,5 +109,42 @@ describe('fjärrskärmens vyer renderar utan att krascha', () => {
     expect(html).toContain('value="Kristian"');
     expect(html).toContain('value="Lisa"');
     expect(html).toContain('Tak på 100');
+  });
+  it('kalibreringen visar kamerans bild, statusraden och knapparna', () => {
+    const hostState = {
+      calibrating: true,
+      calStep: 'punkter' as const,
+      calStatus: 'Tavlan hittad. Kontrollera att de streckade linjerna ligger på trådarna.',
+      calBusy: false,
+      confirmEmpty: false,
+      canCancel: true,
+    };
+    const html = renderToStaticMarkup(
+      createElement(RemoteCalibration, {
+        hostState,
+        preview: { jpegBase64: 'AAAA', at: 1, wireframe: true },
+        locked: false,
+        onAction: noop,
+        onClose: noop,
+      }),
+    );
+    expect(html).toContain('data:image/jpeg;base64,AAAA');
+    expect(html).toContain('Tavlan hittad');
+    expect(html).toContain('Auto');
+    expect(html).toContain('Spara');
+    expect(html).toContain('Avbryt');
+    const calibrated = renderToStaticMarkup(
+      createElement(RemoteCalibration, {
+        hostState: { ...hostState, calibrating: false, calStep: null },
+        preview: null,
+        locked: false,
+        onAction: noop,
+        onClose: noop,
+      }),
+    );
+    expect(calibrated).toContain('Kalibrera om');
+    expect(renderToStaticMarkup(createElement(RemoteConfirmEmpty, { locked: false, onConfirm: noop }))).toContain(
+      'Tavlan är tom',
+    );
   });
 });

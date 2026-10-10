@@ -32,6 +32,19 @@ const ALL: WireMessage[] = [
     baseVersion: -1,
     op: { kind: 'startMatch', config: { mode: 'FARFAR', doubleOut: false, farfarCap: true, players: [{ name: 'Anna' }] } },
   },
+  { ...base, type: 'propose', proposalId: 'p8', baseVersion: 7, op: { kind: 'calibrate', action: 'auto' } },
+  { ...base, type: 'propose', proposalId: 'p9', baseVersion: 7, op: { kind: 'confirmEmpty' } },
+  {
+    ...base,
+    type: 'hostState',
+    calibrating: true,
+    calStep: 'punkter',
+    calStatus: 'Tavlan hittad.',
+    calBusy: false,
+    confirmEmpty: false,
+    canCancel: true,
+  },
+  { ...base, type: 'calPreview', jpegBase64: '/9j/4AAQ', at: 1791575364798, wireframe: true },
   { ...base, type: 'reject', proposalId: 'p1', reason: 'Matchen ändrades - försök igen' },
   { ...base, type: 'ping', t: 123.5 },
   { ...base, type: 'pong', t: 123.5 },
@@ -56,7 +69,17 @@ describe('protokollet', () => {
 
   it('täcker alla typer', () => {
     const types = new Set(ALL.map((m) => m.type));
-    expect([...types].sort()).toEqual(['frame', 'hello', 'ping', 'pong', 'propose', 'reject', 'snapshot']);
+    expect([...types].sort()).toEqual([
+      'calPreview',
+      'frame',
+      'hello',
+      'hostState',
+      'ping',
+      'pong',
+      'propose',
+      'reject',
+      'snapshot',
+    ]);
   });
 
   it('fel protokollversion, okänd typ och trasig JSON ger null, inte ett undantag', () => {
@@ -84,6 +107,8 @@ describe('protokollet', () => {
     expect(p({ kind: 'startMatch', config: { ...cfg, players: [{ name: '  ' }] } })).toBeNull();
     expect(p({ kind: 'startMatch', config: { ...cfg, players: Array(9).fill({ name: 'x' }) } })).toBeNull();
     expect(p({ kind: 'startMatch', config: { ...cfg, doubleOut: 'ja' } })).toBeNull();
+    expect(p({ kind: 'calibrate', action: 'rotate' })).toBeNull();
+    expect(p({ kind: 'calibrate' })).toBeNull();
   });
 
   it('giltiga fält', () => {

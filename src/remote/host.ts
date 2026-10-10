@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION,
   isHostCommand,
   type HostCommand,
+  type HostState,
   type MatchOp,
   type ProposeMessage,
   type RemoteOp,
@@ -96,6 +97,8 @@ export class RemoteHost {
   private readonly onApplied?: (applied: AppliedOp) => void;
   private readonly onPeersChanged?: (clients: string[]) => void;
   private readonly onCommand?: (cmd: HostCommand, clientId: string) => string | null;
+  private hostState: HostState | null = null;
+  private lastPreview: { jpegBase64: string; at: number; wireframe: boolean } | null = null;
   /** Vad som senast skickades, så att ett notifyChanged utan ändring inte ger en ny version. */
   private lastSentJson: string;
 
@@ -159,6 +162,34 @@ export class RemoteHost {
     this.broadcast();
   }
 
+  /**
+   * Kameraläget utanför matchen (kalibrering, "dra ut alla pilar"). Skickas
+   * bara när det ändrats; en fjärrskärm som hälsar får det direkt.
+   */
+  setHostState(state: HostState): void {
+    if (this.hostState && JSON.stringify(this.hostState) === JSON.stringify(state)) return;
+    this.hostState = { ...state };
+    for (const p of this.peers) if (p.open && p.clientId) this.sendHostState(p);
+    // En gammal förhandsbild hör till förra kalibreringen.
+    if (!state.calibrating) this.lastPreview = null;
+  }
+
+  /** Kamerabild med wireframe, under kalibrering. Den senaste sparas för fjärrskärmar som ansluter. */
+  sendPreview(jpegBase64: string, wireframe: boolean, at = Date.now()): void {
+    this.lastPreview = { jpegBase64, at, wireframe };
+    for (const p of this.peers) if (p.open && p.clientId) this.sendPreviewTo(p);
+  }
+
+  private sendHostState(peer: Peer): void {
+    if (!this.hostState) return;
+    peer.transport.send({ v: PROTOCOL_VERSION, type: 'hostState', matchId: this.match?.id ?? '', ...this.hostState });
+  }
+
+  private sendPreviewTo(peer: Peer): void {
+    if (!this.lastPreview) return;
+    peer.transport.send({ v: PROTOCOL_VERSION, type: 'calPreview', matchId: this.match?.id ?? '', ...this.lastPreview });
+  }
+
   private matchJson(): string {
     return this.match ? JSON.stringify(serializeMatch(this.match)) : '';
   }
@@ -192,6 +223,8 @@ export class RemoteHost {
         // Alltid aktuell bild, oavsett knownVersion: den är några kB och
         // bekräftar samtidigt att kanalen fungerar åt båda håll.
         peer.transport.send(this.snapshot());
+        this.sendHostState(peer);
+        if (this.hostState?.calibrating) this.sendPreviewTo(peer);
         return;
       case 'propose':
         this.applyProposal(peer, msg);

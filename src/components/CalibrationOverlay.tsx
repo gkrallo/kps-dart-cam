@@ -34,6 +34,14 @@ interface CalibrationOverlayProps {
   zoomLevel?: number;
   onZoomChange?: (zoom: number) => void;
   zoomCapability?: ZoomCapability;
+  /**
+   * Knapptryck från fjärrskärmen. `n` ökas per tryck så att samma knapp två
+   * gånger i rad blir två tryck. Kör exakt samma hanterare som knapparna här
+   * - ingen egen kalibreringslogik.
+   */
+  remoteCommand?: { action: 'auto' | 'save' | 'cancel'; n: number } | null;
+  /** Vyns läge, för fjärrskärmen: steg, statusrad och om Auto/zoom arbetar. */
+  onRemoteState?: (s: { step: 'sikte' | 'punkter'; status: string | null; busy: boolean }) => void;
 }
 
 export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
@@ -46,6 +54,8 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
   zoomLevel = 1,
   onZoomChange,
   zoomCapability,
+  remoteCommand,
+  onRemoteState,
 }) => {
   const [points, setPoints] = useState<Point[]>([]);
   const [activeIdx, setActiveIdx] = useState<number>(0);
@@ -457,6 +467,69 @@ export const CalibrationOverlay: React.FC<CalibrationOverlayProps> = ({
       window.setTimeout(() => setDetectStatus(null), 5000);
     });
   };
+
+  /* --- fjärrskärmen ---------------------------------------------------- */
+  // Bara knapparna här, tryckta på avstånd: telefonen i stativet ska inte
+  // behöva röras (Kristian 2026-10-09, fästet gungar). Ingen egen logik.
+
+  // Senaste versionerna av hanterarna, för effekter som körs en rendering
+  // senare (efter zoomen i siktet).
+  const autoDetectRef = useRef(handleAutoDetect);
+  autoDetectRef.current = handleAutoDetect;
+  /** Auto i siktet = "Zooma till tavlan" och sedan Auto, som två tryck i följd. */
+  const autoAfterZoomRef = useRef(false);
+  /** Ökas av Avbryt: sparar de återställda punkterna i nästa rendering, när de hunnit sättas. */
+  const [restoreSaveTick, setRestoreSaveTick] = useState(0);
+
+  useEffect(() => {
+    if (!remoteCommand) return;
+    if (remoteCommand.action === 'auto') {
+      if (calibrationStep === 'sikte') {
+        autoAfterZoomRef.current = true;
+        handleAutoZoomToBoard();
+      } else {
+        handleAutoDetect();
+      }
+    } else if (remoteCommand.action === 'save') {
+      handleSaveCalibration();
+    } else if (remoteCommand.action === 'cancel') {
+      // Tillbaka till den sparade kalibreringen, oförändrad - som om
+      // "Kalibrera om" aldrig tryckts.
+      const stored = loadCalibration();
+      const restored = stored ? fromStored(stored, { width: containerWidth, height: containerHeight }) : null;
+      if (!restored) return;
+      if (stored?.zoom !== undefined) {
+        prevZoomRef.current = stored.zoom;
+        onZoomChange?.(stored.zoom);
+      }
+      setPoints(restored);
+      onPointsChange(restored);
+      setRestoreSaveTick((t) => t + 1);
+    }
+    // Bara när ett nytt tryck kommer (n ökar), inte när hanterarna byts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteCommand?.n]);
+
+  useEffect(() => {
+    if (restoreSaveTick > 0) handleSaveCalibration();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreSaveTick]);
+
+  useEffect(() => {
+    if (!autoAfterZoomRef.current || isZoomingToBoard) return;
+    autoAfterZoomRef.current = false;
+    // Hittade zoomen ingen tavla står vi kvar i siktet med dess besked.
+    if (calibrationStep === 'punkter') window.setTimeout(() => autoDetectRef.current(), 300);
+  }, [isZoomingToBoard, calibrationStep]);
+
+  useEffect(() => {
+    onRemoteState?.({
+      step: calibrationStep,
+      status: detectStatus ?? siktStatus,
+      busy: isDetecting || isZoomingToBoard,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calibrationStep, detectStatus, siktStatus, isDetecting, isZoomingToBoard]);
 
   // Reset 4 points to standard circle centered on screen
   const resetToDefaultCircle = () => {
