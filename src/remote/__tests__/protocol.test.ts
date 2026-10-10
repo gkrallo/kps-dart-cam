@@ -24,6 +24,14 @@ const ALL: WireMessage[] = [
   { ...base, type: 'propose', proposalId: 'p4', baseVersion: 7, op: { kind: 'remove', actionIndex: 0 } },
   { ...base, type: 'propose', proposalId: 'p5', baseVersion: 7, op: { kind: 'undo' } },
   { ...base, type: 'propose', proposalId: 'p6', baseVersion: 7, op: { kind: 'endTurn' } },
+  {
+    ...base,
+    matchId: '',
+    type: 'propose',
+    proposalId: 'p7',
+    baseVersion: -1,
+    op: { kind: 'startMatch', config: { mode: 'FARFAR', doubleOut: false, farfarCap: true, players: [{ name: 'Anna' }] } },
+  },
   { ...base, type: 'reject', proposalId: 'p1', reason: 'Matchen ändrades - försök igen' },
   { ...base, type: 'ping', t: 123.5 },
   { ...base, type: 'pong', t: 123.5 },
@@ -69,6 +77,13 @@ describe('protokollet', () => {
     expect(p({ kind: 'replace', actionIndex: 1.5, seg: { v: 1, m: 1 } })).toBeNull();
     expect(p({ kind: 'remove' })).toBeNull();
     expect(p({ kind: 'restartLeg' })).toBeNull();
+    const cfg = { mode: '501', doubleOut: false, farfarCap: false, players: [{ name: 'Anna' }] };
+    expect(p({ kind: 'startMatch', config: cfg })).not.toBeNull();
+    expect(p({ kind: 'startMatch', config: { ...cfg, mode: '701' } })).toBeNull();
+    expect(p({ kind: 'startMatch', config: { ...cfg, players: [] } })).toBeNull();
+    expect(p({ kind: 'startMatch', config: { ...cfg, players: [{ name: '  ' }] } })).toBeNull();
+    expect(p({ kind: 'startMatch', config: { ...cfg, players: Array(9).fill({ name: 'x' }) } })).toBeNull();
+    expect(p({ kind: 'startMatch', config: { ...cfg, doubleOut: 'ja' } })).toBeNull();
   });
 
   it('giltiga fält', () => {

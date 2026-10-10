@@ -519,4 +519,51 @@ describe('synk: host och fjärrskärm', () => {
     a.remote.close();
     expect(seen).toEqual([1, 2, 1]);
   });
+  it('ny match från fjärrskärmen går via onCommand, även när ingen match finns', async () => {
+    let match: Match | null = null;
+    const commands: string[] = [];
+    const host = new RemoteHost(null, {
+      initialVersion: 1,
+      onCommand: (cmd, clientId) => {
+        commands.push(cmd.kind + ':' + clientId.length);
+        if (cmd.kind !== 'startMatch') return 'nej';
+        match = createMatch({ mode: cmd.config.mode, players: cmd.config.players });
+        match.id = 'm-fjarr';
+        // Som App: den nya matchen meddelas via notifyChanged.
+        queueMicrotask(() => host.notifyChanged(match));
+        return null;
+      },
+    });
+    const pair = createLoopbackPair();
+    host.attach(pair.host);
+    const rep = new RemoteReplica({ storage: memStorage() });
+    rep.attach(pair.remote);
+    await settle(pair);
+    expect(rep.state).toBeNull();
+
+    await rep.propose({ kind: 'startMatch', config: { mode: '301', doubleOut: false, farfarCap: false, players: [{ name: 'Anna' }, { name: 'Bo' }] } });
+    await settle(pair);
+    expect(commands).toEqual(['startMatch:' + rep.clientId.length]);
+    expect(rep.matchId).toBe('m-fjarr');
+    expect(rep.state?.players.map((p) => p.name)).toEqual(['Anna', 'Bo']);
+    expect(rep.state?.view.remaining).toBe(301);
+  });
+
+  it('ett kommando som appen vägrar avvisas med appens skäl', async () => {
+    const host = new RemoteHost(mk(), { onCommand: () => 'Kalibrera först' });
+    const pair = createLoopbackPair();
+    host.attach(pair.host);
+    const rep = new RemoteReplica({ storage: memStorage() });
+    rep.attach(pair.remote);
+    await settle(pair);
+    expect(
+      await failure(rep.propose({ kind: 'startMatch', config: { mode: '501', doubleOut: false, farfarCap: false, players: [{ name: 'A' }] } })),
+    ).toBe('Kalibrera först');
+    const noHandler = rig();
+    const c = connect(noHandler);
+    await settle(c.pair);
+    expect(
+      await failure(c.rep.propose({ kind: 'startMatch', config: { mode: '501', doubleOut: false, farfarCap: false, players: [{ name: 'A' }] } })),
+    ).toBe(REASON_NOT_ACCEPTED);
+  });
 });

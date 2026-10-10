@@ -11,7 +11,7 @@ import type { DetectionMeta, Seg } from './game/types';
 import { audioEngine } from './utils/audioEngine';
 import { GameSetup } from './components/GameSetup';
 import { ResumeCard } from './components/ResumeCard';
-import { segFromDartScore, segFromLabel } from './game';
+import { segFromDartScore, segFromLabel, GAME_MODE_LABEL } from './game';
 import {
   engineFor,
   matchState,
@@ -28,6 +28,7 @@ import { BUILD_VERSION } from './buildInfo';
 import { useRemoteHost } from './hooks/useRemoteHost';
 import { HostPairing } from './components/remote/HostPairing';
 import type { AppliedOp } from './remote/host';
+import type { HostCommand } from './remote/protocol';
 
 /**
  * Hur länge avläsningen står kvar i paus efter en parkoppling. Fjärrskärmen
@@ -607,7 +608,45 @@ export default function App() {
     [match, commitRemoteChange],
   );
 
-  const { clients: remoteClients, startPairing } = useRemoteHost(match, state, handleRemoteApplied);
+  /**
+   * Kommandon från fjärrskärmen som inte är matchändringar. Ny match går
+   * samma väg som GameSetup och "Spela igen" på telefonen: useMatch.start.
+   * Returnerar null när det är utfört, annars skälet som visas där.
+   */
+  const handleRemoteCommand = useCallback(
+    (cmd: HostCommand): string | null => {
+      if (cmd.kind === 'startMatch') {
+        // Kan pilar sitta kvar i tavlan fortsätter detektorn annars med dem
+        // som "registrerade", och tömningen avslutar den nya matchens
+        // första tur. Samma fråga som efter en omkalibrering mitt i en tur.
+        const dartsMayRemain =
+          isCalibrated && !!state && !state.finished && (state.currentDarts.length > 0 || awaitingRetrieval);
+        const c = cmd.config;
+        start({
+          mode: c.mode,
+          doubleOut: c.mode !== 'FARFAR' && c.doubleOut,
+          farfarCap: c.mode === 'FARFAR' && c.farfarCap,
+          players: c.players.map((p) => ({ name: p.name.trim() })),
+        });
+        // Uppstartsfrågan ("Fortsätt matchen?") är besvarad: matchen startades
+        // nyss. Annars dyker den upp efter kalibreringen om den tagit mer än
+        // AUTO_RESUME_MS, och då måste någon gå fram till telefonen.
+        startupDecided.current = true;
+        setShowSetup(false);
+        setShowResume(false);
+        if (dartsMayRemain) setConfirmEmpty(true);
+        audioEngine.speak(`Ny match, ${GAME_MODE_LABEL[c.mode]}. ${c.players[0].name.trim()} börjar.`);
+        return null;
+      }
+      return 'Det gick inte just nu';
+    },
+    [isCalibrated, state, awaitingRetrieval, start],
+  );
+
+  const { clients: remoteClients, startPairing } = useRemoteHost(match, state, {
+    onApplied: handleRemoteApplied,
+    onCommand: handleRemoteCommand,
+  });
   const [showPairing, setShowPairing] = useState(false);
   /** Paus efter parkopplingen, se PAIRING_RESUME_MS. */
   const [pairingHold, setPairingHold] = useState(false);

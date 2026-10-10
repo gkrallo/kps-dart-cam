@@ -7,6 +7,7 @@ import { RemotePairing } from '../remote/RemotePairing';
 import { QrCode } from '../remote/QrCode';
 import { CodePaste, CodeShare } from '../remote/CodeTools';
 import { TurnHistory } from '../TurnHistory';
+import { GameSetup } from '../GameSetup';
 import { createMatch, endTurn, matchState, throwDart } from '../../game/match';
 
 /**
@@ -16,7 +17,15 @@ import { createMatch, endTurn, matchState, throwDart } from '../../game/match';
  */
 
 const noop = () => {};
-const handlers = { onEditDart: noop, onAddDart: noop, onUndo: noop, onEndTurn: noop, onHistory: noop };
+const handlers = {
+  onEditDart: noop,
+  onAddDart: noop,
+  onUndo: noop,
+  onEndTurn: noop,
+  onHistory: noop,
+  onNewMatch: noop,
+  onPlayAgain: noop,
+};
 
 describe('fjärrskärmens vyer renderar utan att krascha', () => {
   it('resultattavla, 501 mitt i en tur', () => {
@@ -53,6 +62,7 @@ describe('fjärrskärmens vyer renderar utan att krascha', () => {
     const st = { ...matchState(m), finished: true, winners: ['Kristian'] };
     const html = renderToStaticMarkup(createElement(RemoteScoreboard, { state: st, locked: false, ...handlers }));
     expect(html).toContain('vinner!');
+    expect(html).toContain('Spela igen, samma spelare');
   });
 
   it('statusraden i alla tre lägen', () => {
@@ -87,5 +97,16 @@ describe('fjärrskärmens vyer renderar utan att krascha', () => {
     expect(renderToStaticMarkup(createElement(TurnHistory, { ...props, onEditorOpen: noop }))).toBe(
       renderToStaticMarkup(createElement(TurnHistory, props)),
     );
+  });
+  it('inställningarna förifylls med förra matchens upplägg', () => {
+    const html = renderToStaticMarkup(
+      createElement(GameSetup, {
+        onStart: noop,
+        initial: { mode: 'FARFAR', farfarCap: true, players: [{ name: 'Kristian' }, { name: 'Anders' }, { name: 'Lisa' }] },
+      }),
+    );
+    expect(html).toContain('value="Kristian"');
+    expect(html).toContain('value="Lisa"');
+    expect(html).toContain('Tak på 100');
   });
 });

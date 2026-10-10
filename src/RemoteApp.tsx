@@ -4,10 +4,12 @@ import { RemoteScoreboard } from './components/remote/RemoteScoreboard';
 import { RemoteStatusBar, type RemoteStatus } from './components/remote/RemoteStatusBar';
 import { ThrowEditor } from './components/ThrowEditor';
 import { TurnHistory } from './components/TurnHistory';
+import { GameSetup } from './components/GameSetup';
 import { useRemoteReplica } from './hooks/useRemoteReplica';
 import { useWakeLock } from './hooks/useWakeLock';
 import { label as segLabel } from './game/segments';
-import type { RemoteOp } from './remote/protocol';
+import type { RemoteOp, StartMatchConfig } from './remote/protocol';
+import type { MatchState } from './game/types';
 
 /** Livstecken var 5:e s; hörs kameran inte på 15 s är kanalen tyst (wifiglapp). */
 const PING_MS = 5000;
@@ -36,7 +38,15 @@ type Dialog =
   | { kind: 'add'; version: number }
   | { kind: 'undo'; version: number; text: string }
   | { kind: 'endTurn'; text: string }
+  | { kind: 'newMatch' }
   | null;
+
+/** Förra matchens upplägg - inställningarna förifylls, och "Spela igen" tar det rakt av. */
+function configOf(state: MatchState | null): StartMatchConfig | undefined {
+  if (!state) return undefined;
+  const c = state.config;
+  return { mode: c.mode, doubleOut: c.doubleOut, farfarCap: c.farfarCap, players: c.players.map((p) => ({ name: p.name })) };
+}
 
 /**
  * Fjärrskärmen (?remote). Laddar aldrig kameran, OpenCV eller detektorn -
@@ -52,6 +62,7 @@ export default function RemoteApp() {
   const [pairing, setPairing] = useState(() => initialOffer !== null || replica.match === null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [, setTick] = useState(0);
   /** Versionen när en pil i Turer valdes, se onEditorOpen. */
@@ -82,6 +93,7 @@ export default function RemoteApp() {
     if (locked) {
       setDialog(null);
       setShowHistory(false);
+      setShowSetup(false);
     }
   }, [locked]);
 
@@ -90,8 +102,17 @@ export default function RemoteApp() {
     window.setTimeout(() => setToast((t) => (t === text ? null : t)), 3500);
   };
 
-  const send = (op: RemoteOp, baseVersion?: number) => {
-    replica.propose(op, baseVersion).catch((e: Error) => flash(e.message));
+  const send = (op: RemoteOp, baseVersion?: number): Promise<boolean> =>
+    replica.propose(op, baseVersion).then(
+      () => true,
+      (e: Error) => {
+        flash(e.message);
+        return false;
+      },
+    );
+
+  const startMatch = (config: StartMatchConfig) => {
+    void send({ kind: 'startMatch', config }).then((ok) => ok && setShowSetup(false));
   };
 
   if (pairing) {
@@ -136,10 +157,61 @@ export default function RemoteApp() {
             });
           }}
           onHistory={() => setShowHistory(true)}
+          onNewMatch={() => (state.finished ? setShowSetup(true) : setDialog({ kind: 'newMatch' }))}
+          onPlayAgain={() => {
+            const c = configOf(state);
+            if (c) startMatch(c);
+          }}
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center p-6 text-center text-2xl text-slate-400">
-          Ingen match pågår. Starta en på kameran.
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center text-2xl text-slate-400">
+          Ingen match pågår.
+          <button
+            disabled={locked}
+            onClick={() => setShowSetup(true)}
+            className="px-6 py-3 rounded-2xl bg-blue-600 disabled:opacity-40 text-white font-black text-xl"
+          >
+            Starta en match
+          </button>
+        </div>
+      )}
+
+      {showSetup && (
+        <GameSetup
+          initial={configOf(state)}
+          onStart={(opts) =>
+            startMatch({
+              mode: opts.mode,
+              doubleOut: !!opts.doubleOut,
+              farfarCap: !!opts.farfarCap,
+              players: opts.players.map((p) => ({ name: p.name })),
+            })
+          }
+          onSkip={() => setShowSetup(false)}
+        />
+      )}
+
+      {dialog?.kind === 'newMatch' && (
+        <div className="absolute inset-0 z-50 bg-slate-950/90 flex items-center justify-center p-6">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-3xl p-5 flex flex-col gap-4">
+            <p className="text-xl font-bold text-white text-center">
+              Avsluta matchen och starta en ny? Ställningen i den här matchen sparas inte.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => setDialog(null)} className="py-3 rounded-2xl bg-slate-800 text-slate-200 font-bold">
+                Avbryt
+              </button>
+              <button
+                onClick={() => {
+                  setDialog(null);
+                  setShowSetup(true);
+                }}
+                className="py-3 rounded-2xl bg-blue-600 text-white font-black"
+              >
+                Ny match
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

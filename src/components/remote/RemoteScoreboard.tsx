@@ -1,4 +1,4 @@
-import { RotateCcw, SkipForward, History, Trophy, AlertTriangle, Plus } from 'lucide-react';
+import { RotateCcw, SkipForward, History, Trophy, AlertTriangle, Plus, RefreshCw, Play } from 'lucide-react';
 import type { MatchState } from '../../game/types';
 import { label as segLabel, score as segScore } from '../../game/segments';
 import { engineFor } from '../../game/match';
@@ -12,6 +12,10 @@ interface Props {
   onUndo: () => void;
   onEndTurn: () => void;
   onHistory: () => void;
+  /** Ny match: öppnar inställningarna (efter en bekräftelse mitt i en match). */
+  onNewMatch: () => void;
+  /** Avgjord match: samma spelläge och spelare igen, direkt. */
+  onPlayAgain: () => void;
 }
 
 /**
@@ -23,7 +27,17 @@ interface Props {
  * Porträtt (telefon) staplar; landskap (surfplatta) lägger poängen till
  * vänster och pilarna och spelarna till höger.
  */
-export function RemoteScoreboard({ state, locked, onEditDart, onAddDart, onUndo, onEndTurn, onHistory }: Props) {
+export function RemoteScoreboard({
+  state,
+  locked,
+  onEditDart,
+  onAddDart,
+  onUndo,
+  onEndTurn,
+  onHistory,
+  onNewMatch,
+  onPlayAgain,
+}: Props) {
   const { view, active, currentDarts } = state;
   const isFarfar = state.mode === 'FARFAR';
   const hasEndTurn = engineFor(state.config).hasEndTurn;
@@ -40,6 +54,22 @@ export function RemoteScoreboard({ state, locked, onEditDart, onAddDart, onUndo,
             <Trophy className="w-16 h-16 text-amber-400" />
             <div className="text-5xl sm:text-7xl font-black text-emerald-300">{state.winners.join(' & ')}</div>
             <div className="text-2xl font-bold text-slate-300">vinner!</div>
+            <div className="flex flex-wrap justify-center gap-3 mt-4">
+              <button
+                disabled={locked}
+                onClick={onPlayAgain}
+                className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-blue-600 disabled:opacity-40 text-white font-black text-lg"
+              >
+                <Play className="w-5 h-5" /> Spela igen, samma spelare
+              </button>
+              <button
+                disabled={locked}
+                onClick={onNewMatch}
+                className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-slate-800 disabled:opacity-40 text-slate-100 font-bold text-lg"
+              >
+                <RefreshCw className="w-5 h-5" /> Ny match
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -140,7 +170,7 @@ export function RemoteScoreboard({ state, locked, onEditDart, onAddDart, onUndo,
           })}
         </ul>
 
-        <div className="grid grid-cols-3 gap-2 mt-auto">
+        <div className="grid grid-cols-4 gap-2 mt-auto">
           <button
             disabled={locked}
             onClick={onUndo}
@@ -162,6 +192,13 @@ export function RemoteScoreboard({ state, locked, onEditDart, onAddDart, onUndo,
             className="flex flex-col items-center justify-center gap-1 py-3 rounded-2xl bg-slate-800 disabled:opacity-40 text-slate-100 font-bold"
           >
             <History className="w-6 h-6 text-blue-300" /> Turer
+          </button>
+          <button
+            disabled={locked}
+            onClick={onNewMatch}
+            className="flex flex-col items-center justify-center gap-1 py-3 rounded-2xl bg-slate-800 disabled:opacity-40 text-slate-100 font-bold"
+          >
+            <RefreshCw className="w-6 h-6 text-slate-300" /> Ny match
           </button>
         </div>
       </section>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Match, MatchState } from '../game/types';
 import { RemoteHost, type AppliedOp } from '../remote/host';
+import type { HostCommand } from '../remote/protocol';
 import { WebRtcTransport } from '../remote/webRtcTransport';
 
 export interface PairingSession {
@@ -21,22 +22,26 @@ export interface PairingSession {
  * Fjärrskärmar är ett tillägg: utan parkoppling skapas ingen WebRTC-
  * förbindelse alls, och en fjärrskärm som försvinner glöms bara bort.
  */
-export function useRemoteHost(
-  match: Match | null,
-  state: MatchState | null,
-  onApplied: (a: AppliedOp) => void,
-) {
-  // I en ref av samma skäl som detektorns callbacks: den får ny identitet vid
+export interface RemoteHostHandlers {
+  /** Ett förslag från en fjärrskärm har ändrat matchen. */
+  onApplied: (a: AppliedOp) => void;
+  /** Ett kommando till appen (ny match ...). null = utfört, annars skälet. */
+  onCommand: (cmd: HostCommand, clientId: string) => string | null;
+}
+
+export function useRemoteHost(match: Match | null, state: MatchState | null, handlers: RemoteHostHandlers) {
+  // I en ref av samma skäl som detektorns callbacks: de får ny identitet vid
   // varje kast, och värden ska inte byggas om för det.
-  const onAppliedRef = useRef(onApplied);
+  const handlersRef = useRef(handlers);
   useEffect(() => {
-    onAppliedRef.current = onApplied;
+    handlersRef.current = handlers;
   });
   const [clients, setClients] = useState<string[]>([]);
   const hostRef = useRef<RemoteHost | null>(null);
   if (hostRef.current === null) {
     hostRef.current = new RemoteHost(match, {
-      onApplied: (a) => onAppliedRef.current(a),
+      onApplied: (a) => handlersRef.current.onApplied(a),
+      onCommand: (cmd, clientId) => handlersRef.current.onCommand(cmd, clientId),
       onPeersChanged: setClients,
     });
   }

@@ -12,7 +12,7 @@
  *
  * Allt är ren data (JSON). Inga beroenden till React, WebRTC eller OpenCV.
  */
-import type { MatchAction, MatchConfig, Seg } from '../game/types';
+import type { GameMode, MatchAction, MatchConfig, Seg } from '../game/types';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -24,17 +24,45 @@ export interface SerializedMatch {
   actions: MatchAction[];
 }
 
+/** Det GameSetup ger: spelläge, regelval och spelarnas namn. */
+export interface StartMatchConfig {
+  mode: GameMode;
+  doubleOut: boolean;
+  farfarCap: boolean;
+  players: { name: string }[];
+}
+
+export type CalibrateAction = 'open' | 'auto' | 'save' | 'cancel';
+
 /**
- * Samma operationer som useMatch exponerar, inga fler. Index är index i
- * `match.actions` (samma `ai` som i `ThrowLogEntry`).
+ * Ändringar i matchen: samma operationer som useMatch exponerar, inga fler.
+ * Index är index i `match.actions` (samma `ai` som i `ThrowLogEntry`).
  */
-export type RemoteOp =
+export type MatchOp =
   | { kind: 'throw'; seg: Seg }
   | { kind: 'replace'; actionIndex: number; seg: Seg }
   | { kind: 'insert'; actionIndex: number; seg: Seg }
   | { kind: 'remove'; actionIndex: number }
   | { kind: 'undo' }
   | { kind: 'endTurn' };
+
+/**
+ * Kommandon till kameraappen själv, inte till matchen: ny match (och senare
+ * kalibrering). De rör sånt som bor i App - uppstartsflödet, detektorn - så
+ * RemoteHost lämnar dem vidare via `onCommand` i stället för att tillämpa
+ * dem själv. Tillagda efter första enhetstestet 2026-10-09: varje tryck på
+ * telefonen i stativet riskerar att rubba bilden.
+ */
+export type HostCommand = { kind: 'startMatch'; config: StartMatchConfig };
+
+export type RemoteOp = MatchOp | HostCommand;
+
+export const isHostCommand = (op: RemoteOp): op is HostCommand => op.kind === 'startMatch';
+
+const MODES: readonly GameMode[] = ['301', '501', 'FARFAR'];
+/** Samma tak som GameSetup. */
+export const MAX_PLAYERS = 8;
+const MAX_NAME = 30;
 
 interface Envelope {
   v: typeof PROTOCOL_VERSION;
@@ -150,9 +178,19 @@ function isValidOp(op: unknown): op is RemoteOp {
     case 'undo':
     case 'endTurn':
       return true;
+    case 'startMatch':
+      return isValidStartConfig(op.config);
     default:
       return false;
   }
+}
+
+/** Host litar inte på remote: okänt spelläge eller en tom spelarlista ska inte bli en match. */
+export function isValidStartConfig(c: unknown): c is StartMatchConfig {
+  if (!isObj(c) || !MODES.includes(c.mode as GameMode)) return false;
+  if (typeof c.doubleOut !== 'boolean' || typeof c.farfarCap !== 'boolean') return false;
+  if (!Array.isArray(c.players) || c.players.length < 1 || c.players.length > MAX_PLAYERS) return false;
+  return c.players.every((p) => isObj(p) && isStr(p.name) && p.name.trim().length > 0 && p.name.length <= MAX_NAME);
 }
 
 /**

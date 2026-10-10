@@ -13,13 +13,20 @@ interface Props {
   onStart: (opts: CreateMatchOptions) => void;
   onSkip?: () => void;
   onHelpClick?: () => void;
+  /**
+   * Förifyllt läge och spelare - fjärrskärmen öppnar inställningarna med
+   * förra matchens spelare, så "samma gäng igen" går fort.
+   */
+  initial?: CreateMatchOptions;
 }
 
-export function GameSetup({ onStart, onSkip, onHelpClick }: Props) {
-  const [mode, setMode] = useState<GameMode>('501');
-  const [names, setNames] = useState<string[]>(['Spelare 1', 'Spelare 2']);
-  const [doubleOut, setDoubleOut] = useState(false);
-  const [farfarCap, setFarfarCap] = useState(false);
+export function GameSetup({ onStart, onSkip, onHelpClick, initial }: Props) {
+  const [mode, setMode] = useState<GameMode>(initial?.mode ?? '501');
+  const [names, setNames] = useState<string[]>(
+    initial?.players.length ? initial.players.map((p) => p.name) : ['Spelare 1', 'Spelare 2'],
+  );
+  const [doubleOut, setDoubleOut] = useState(initial?.doubleOut ?? false);
+  const [farfarCap, setFarfarCap] = useState(initial?.farfarCap ?? false);
 
   const setName = (i: number, v: string) => setNames((n) => n.map((x, j) => (j === i ? v : x)));
   const addPlayer = () => names.length < 8 && setNames((n) => [...n, `Spelare ${n.length + 1}`]);

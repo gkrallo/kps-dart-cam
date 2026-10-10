@@ -11,6 +11,9 @@ import {
 import type { Match, MatchAction, MatchState } from '../game/types';
 import {
   PROTOCOL_VERSION,
+  isHostCommand,
+  type HostCommand,
+  type MatchOp,
   type ProposeMessage,
   type RemoteOp,
   type SnapshotMessage,
@@ -27,7 +30,7 @@ export const REASON_NOT_ACCEPTED = 'Det gick inte just nu';
 
 /** Ett accepterat förslag, för appens rättningslogg och historik. */
 export interface AppliedOp {
-  op: RemoteOp;
+  op: MatchOp;
   /** Fjärrskärmen som föreslog ändringen. */
   clientId: string;
   /**
@@ -60,6 +63,12 @@ export interface RemoteHostOptions {
   ackedWindow?: number;
   /** En fjärrskärm har hälsat eller försvunnit. För indikatorn "fjärr ansluten (n)". */
   onPeersChanged?: (clients: string[]) => void;
+  /**
+   * Kommandon till kameraappen (ny match). Returnerar null om det utfördes,
+   * annars skälet att visa på fjärrskärmen. Synkront: kvittensen skickas
+   * direkt efteråt.
+   */
+  onCommand?: (cmd: HostCommand, clientId: string) => string | null;
 }
 
 interface Peer {
@@ -86,6 +95,7 @@ export class RemoteHost {
   private readonly ackedWindow: number;
   private readonly onApplied?: (applied: AppliedOp) => void;
   private readonly onPeersChanged?: (clients: string[]) => void;
+  private readonly onCommand?: (cmd: HostCommand, clientId: string) => string | null;
   /** Vad som senast skickades, så att ett notifyChanged utan ändring inte ger en ny version. */
   private lastSentJson: string;
 
@@ -95,6 +105,7 @@ export class RemoteHost {
     this.ackedWindow = opts.ackedWindow ?? 16;
     this.onApplied = opts.onApplied;
     this.onPeersChanged = opts.onPeersChanged;
+    this.onCommand = opts.onCommand;
     this.lastSentJson = this.matchJson();
   }
 
@@ -194,6 +205,11 @@ export class RemoteHost {
     }
   }
 
+  private ack(proposalId: string): void {
+    this.acked.push(proposalId);
+    if (this.acked.length > this.ackedWindow) this.acked.splice(0, this.acked.length - this.ackedWindow);
+  }
+
   private reject(peer: Peer, msg: ProposeMessage, reason: string): void {
     peer.transport.send({
       v: PROTOCOL_VERSION,
@@ -205,6 +221,20 @@ export class RemoteHost {
   }
 
   private applyProposal(peer: Peer, msg: ProposeMessage): void {
+    // Kommandon (ny match m.m.) gäller kameraappen, inte en viss match: de
+    // kontrolleras inte mot matchId - "starta en match" måste gå även när
+    // ingen finns - och App avgör om de går att utföra.
+    if (isHostCommand(msg.op)) {
+      const reason = this.onCommand ? this.onCommand(msg.op, peer.clientId ?? '') : REASON_NOT_ACCEPTED;
+      if (reason) return this.reject(peer, msg, reason);
+      this.ack(msg.proposalId);
+      // Bara kvittensen: en ny match når fjärrskärmarna när App anropat
+      // notifyChanged, med ny version. Samma version här - fjärrskärmen
+      // läser kvittensen men behåller sin bild.
+      const snap = this.snapshot();
+      for (const p of this.peers) if (p.open) p.transport.send(snap);
+      return;
+    }
     const match = this.match;
     if (!match) return this.reject(peer, msg, REASON_NO_MATCH);
     if (msg.matchId !== match.id) {
@@ -263,8 +293,7 @@ export class RemoteHost {
       return this.reject(peer, msg, REASON_NOT_ACCEPTED);
     }
 
-    this.acked.push(msg.proposalId);
-    if (this.acked.length > this.ackedWindow) this.acked.splice(0, this.acked.length - this.ackedWindow);
+    this.ack(msg.proposalId);
     this._version++;
     this.broadcast();
     this.onApplied?.({
