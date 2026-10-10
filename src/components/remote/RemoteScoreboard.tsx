@@ -2,6 +2,7 @@ import { RotateCcw, SkipForward, History, Trophy, AlertTriangle, Plus, RefreshCw
 import type { MatchState } from '../../game/types';
 import { label as segLabel, score as segScore } from '../../game/segments';
 import { engineFor } from '../../game/match';
+import { lastTurnDarts } from '../../remote/view';
 
 interface Props {
   state: MatchState;
@@ -151,6 +152,7 @@ export function RemoteScoreboard({
         <ul className="flex flex-col gap-1.5 bg-slate-900 border border-slate-800 rounded-3xl p-3 overflow-y-auto min-h-0">
           {state.players.map((p, i) => {
             const current = !state.finished && i === state.currentIndex;
+            const darts = lastTurnDarts(state, i);
             return (
               <li
                 key={p.id}
@@ -162,8 +164,15 @@ export function RemoteScoreboard({
                   {current && '▶ '}
                   {p.name}
                 </span>
-                <span className="text-xl sm:text-2xl font-black tabular-nums text-amber-300 shrink-0">
-                  {isFarfar ? `${p.savedDarts ?? 0} sparade` : p.score}
+                <span className="flex items-baseline gap-3 shrink-0">
+                  {darts.length > 0 && (
+                    <span className="text-base sm:text-lg font-bold text-slate-400 tabular-nums">
+                      ({darts.map(segLabel).join(' · ')})
+                    </span>
+                  )}
+                  <span className="text-xl sm:text-2xl font-black tabular-nums text-amber-300">
+                    {isFarfar ? `${p.savedDarts ?? 0} sparade` : p.score}
+                  </span>
                 </span>
               </li>
             );

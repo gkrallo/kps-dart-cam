@@ -39,6 +39,7 @@ describe('fjärrskärmens vyer renderar utan att krascha', () => {
     expect(html).toContain('436'); // 501 - 60 - 5
     expect(html).toContain('T20?'); // flaggad pil
     expect(html).toContain('Nästa spelare');
+    expect(html).toContain('(T20 · 5)'); // den som står på tur: den pågående turen
   });
 
   it('resultattavla, Farfar visar mål, runda och sparade pilar', () => {
